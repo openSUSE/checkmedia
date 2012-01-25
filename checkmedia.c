@@ -74,9 +74,10 @@ int main(int argc, char **argv)
   int i;
   unsigned opt_verbose = 0;
   unsigned opt_help = 0;
+  unsigned opt_version = 0;
 
   if(argc > 1) {
-    if(!strcmp(argv[1], "-v")) {
+    if(!strcmp(argv[1], "-v") || !strcmp(argv[1], "--verbose")) {
       opt_verbose = 1;
       argc--;
       argv++;
@@ -84,15 +85,28 @@ int main(int argc, char **argv)
     else if(!strcmp(argv[1], "-h") || !strcmp(argv[1], "--help")) {
       opt_help = 1;
     }
+    else if(!strcmp(argv[1], "--version")) {
+      opt_version = 1;
+    }
   }
 
   if(opt_help || argc != 2) {
     printf(
-      "usage: checkmedia iso\n"
+      "usage: checkmedia [options] iso\n"
       "Check SUSE installation media.\n"
+      "Options:\n"
+      "  --verbose\tshow some more info\n"
+      "  --version\tdisplay version number\n"
+      "  --help\tshort help text\n"
     );
 
     return 1;
+  }
+
+  if(opt_version) {
+    printf("3.0\n");
+
+    return 0;
   }
 
   get_info(argv[1], opt_verbose);
