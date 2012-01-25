@@ -1,0 +1,144 @@
+#! /usr/bin/perl
+
+# Add/remove key=value pairs from iso application area (0x200 bytes at
+# 0x8373). Entries are separated by semicolons ';'.
+#
+# digest is calculated assuming all zeros in 0x0000-0x01ff (MBR) and all
+# spaces in 0x8373-0x8572.
+
+
+use Getopt::Long;
+use Digest::MD5;
+use Digest::SHA;
+
+sub help;
+
+$opt_digest = undef;
+$opt_check = 0;
+$opt_pad = undef;
+$opt_show = 1;
+$opt_clean = 0;
+@opt_add_tag;
+@opt_remove_tag;
+
+GetOptions(
+  'show'             => \$opt_show,
+  'md5|md5sum'       => sub { $opt_digest = 'md5' },
+  'digest=s'         => \$opt_digest,
+  'check'            => \$opt_check,
+  'pad=i'            => \$opt_pad,
+  'add-tag=s'        => \@opt_add_tag,
+  'remove-tag=s'     => \@opt_remove_tag,
+  'clean'            => \$opt_clean,
+);
+
+if($opt_digest =~ /^md5(sum)?$/i) {
+  $digest = Digest::MD5->new;
+}
+elsif($opt_digest =~ /^sha(1|224|256|384|512)(sum)?$/i) {
+  $digest = Digest::SHA->new($1);
+}
+elsif($opt_digest) {
+  die "$opt_digest: unsupported digest\n";
+}
+
+$write_iso = $opt_digest || defined($opt_pad) || $opt_check || @opt_add_tag || @opt_remove_tag || $opt_clean;
+
+$iso = shift;
+
+help if $iso eq '';
+
+$buf_size = 1 << 20;
+
+die "$iso: $!\n" unless open F, $iso;
+die "$iso: $!\n" unless sysread F, $buf0, $buf_size;
+$l = length($buf0);
+$buf_size = $l if $l < $buf_size;
+die "$iso: file too short\n" if ($l < 0x9000) || ($l & 0x3ff);
+
+die "$iso: no iso9660 fs\n" if substr($buf0, 0x8000, 7) ne "\x01CD001\x01";
+$iso_size = 2 * unpack("V", substr($buf0, 0x8050, 4));	# in kB
+
+$tag = substr($buf0, 0x8373, 0x200);
+
+substr($buf0, 0x0000, 0x200) = "\x00" x 0x200;
+substr($buf0, 0x8373, 0x200) = " " x 0x200;
+
+if($opt_check) {
+  unshift @opt_add_tag, "check=1";
+}
+
+if(defined($opt_pad)) {
+  if($opt_pad) {
+    unshift @opt_add_tag, "pad=$opt_pad";
+  }
+  else {
+    unshift @opt_remove_tag, "pad"
+  }
+}
+
+# calculate digest
+if($opt_digest) {
+  $digest->add($buf0);
+
+  while(($iso_size -= $l >> 10) > 0) {
+    $l = $iso_size > $buf_size >> 10 ? $buf_size : $iso_size << 10;
+    $l = sysread F, $buf0, $l;
+    $digest->add($buf0);
+  }
+
+  $digest = $digest->hexdigest;
+
+  unshift @opt_add_tag, "${opt_digest}sum=$digest";
+}
+
+close F;
+
+# replace existing tags
+for (@opt_add_tag) {
+  $new_tag{$1} = 1 if /^(\S+?)\s*=/;
+}
+
+# use old tags unless 'clean' option was given
+if(!$opt_clean) {
+  for (split /;/, $tag) {
+    s/^\s*|\s*$//g;
+    push @old_tags, "$_" unless $_ eq "" || (/^(\S+?)\s*=/ && $new_tag{$1});
+  }
+}
+
+# remove tags
+$rtags{$_} = 1 for @opt_remove_tag;
+for (@old_tags, @opt_add_tag) {
+  push @tags, $_ unless $_ eq "" || (/^(\S+?)\s*=/ && $rtags{$1}) ;
+}
+
+$new_tag = join ';', @tags;
+die "too many tags: \"$new_tag\"\n" if length($new_tag) > 0x200;
+$new_tag .= " " x (0x200 - length($new_tag));
+
+if($write_iso) {
+  die "$iso: $!\n" unless open F, "+<$iso";
+  die "$iso: $!\n" unless seek F, 0x8373, 0;
+  die "$iso: $!\n" unless $l = syswrite F, $new_tag, 0x200;
+  die "$iso: file too short\n" unless $l = 0x200;
+  close F;
+}
+
+print "$_\n" for $write_iso ? @tags : @old_tags;
+
+sub help
+{
+  die
+    "usage: tagmedia [options] iso\n" .
+    "Add/remove tags to SUSE installation media.\n" .
+    "Options:\n" .
+    "  --show\t\tlist tags\n" .
+    "  --digest DIGEST\tadd DIGEST (md5, sha1, sha224, sha256, sha384, sha512)\n" .
+    "  --pad N\t\tignore N 2k-sectors of padding\n" .
+    "  --check\t\tforce yast check\n" .
+    "  --add-tag foo=bar\tadd foo with value bar\n" .
+    "  --remove-tag foo\tremove foo\n" .
+    "  --clean\t\tremove all tags\n";
+}
+
