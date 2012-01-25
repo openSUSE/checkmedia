@@ -115,11 +115,13 @@ int main(int argc, char **argv)
 
   if(iso.err) {
     printf("%s: not an iso\n", argv[1]);
+
     return 1;
   }
 
   if(!iso.digest.type) {
     printf("%s: no digest found\n", argv[1]);
+
     return 1;
   }
 
