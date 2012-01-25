@@ -11,15 +11,15 @@ GITDEPS := $(shell [ -d .git ] && echo .git/HEAD .git/refs/heads .git/refs/tags)
 VERSION := $(shell $(GIT2LOG) --version VERSION ; cat VERSION)
 
 %.o: %.c
-	$(CC) $(CFLAGS) -o $@ $<
-
-changelog: $(GITDEPS)
-	$(GIT2LOG) --changelog changelog
+	$(CC) $(CFLAGS) -DVERSION=\"$(VERSION)\" -o $@ $<
 
 all: checkmedia
 
 checkmedia: $(OBJ)
 	$(CC) $(OBJ) $(LDFLAGS) -o $@
+
+changelog: $(GITDEPS)
+	$(GIT2LOG) --changelog changelog
 
 install: checkmedia
 	install -m 755 -D checkmedia tagmedia $(DESTDIR)/usr/bin

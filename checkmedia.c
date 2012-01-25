@@ -106,7 +106,7 @@ int main(int argc, char **argv)
   }
 
   if(opt_version) {
-    printf("3.0\n");
+    printf(VERSION "\n");
 
     return 0;
   }
