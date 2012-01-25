@@ -1,10 +1,17 @@
+CC      = gcc
+CFLAGS  = -c -g -O2 -Wall
+LDFLAGS =
+
+SRC     = $(wildcard *.c)
+OBJ     = $(SRC:.c=.o)
+
+%.o:    %.c
+	$(CC) $(CFLAGS) -o $@ $<
+
 all: checkmedia
 
-checkmedia: checkmedia.c md5.o
-	gcc -Wall -O2 $< md5.o -o $@
-
-md5.o: md5.c
-	gcc -Wall -O2 -c $<
+checkmedia: $(OBJ)
+	$(CC) $(OBJ) $(LDFLAGS) -o $@
 
 clean:
-	rm -f checkmedia *.o *~
+	rm -f $(OBJ) checkmedia *~
