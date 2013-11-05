@@ -33,11 +33,12 @@
 # include "unlocked-io.h"
 #endif
 
-#ifdef _LIBC
 # include <endian.h>
 # if __BYTE_ORDER == __BIG_ENDIAN
 #  define WORDS_BIGENDIAN 1
 # endif
+
+#ifdef _LIBC
 /* We need to keep the namespace clean so define the MD5 function
    protected using leading __ .  */
 # define md5_init_ctx __md5_init_ctx
