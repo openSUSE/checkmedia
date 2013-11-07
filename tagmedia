@@ -68,9 +68,15 @@ if($opt_check) {
   unshift @opt_add_tag, "check=1";
 }
 
+$pad_size = $opt_pad << 1;
+
 if(defined($opt_pad)) {
   if($opt_pad) {
     unshift @opt_add_tag, "pad=$opt_pad";
+    if($pad_size >= $iso_size) {
+      die "$opt_pad: padding too big!\n";
+    }
+    $iso_size -= $pad_size;
   }
   else {
     unshift @opt_remove_tag, "pad"
@@ -85,6 +91,12 @@ if($opt_digest) {
     $l = $iso_size > $buf_size >> 10 ? $buf_size : $iso_size << 10;
     $l = sysread F, $buf0, $l;
     $digest->add($buf0);
+  }
+
+  $buf0 = "\x00" x 0x400;
+  while($pad_size > 0) {
+    $digest->add($buf0);
+    $pad_size--;
   }
 
   $digest = $digest->hexdigest;
