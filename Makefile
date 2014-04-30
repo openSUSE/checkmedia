@@ -7,8 +7,9 @@ OBJ     = $(SRC:.c=.o)
 
 GIT2LOG := $(shell if [ -x ./git2log ] ; then echo ./git2log --update ; else echo true ; fi)
 GITDEPS := $(shell [ -d .git ] && echo .git/HEAD .git/refs/heads .git/refs/tags)
-
 VERSION := $(shell $(GIT2LOG) --version VERSION ; cat VERSION)
+BRANCH  := $(shell git branch | perl -ne 'print $$_ if s/^\*\s*//')
+PREFIX  := checkmedia-$(VERSION)
 
 %.o: %.c
 	$(CC) $(CFLAGS) -DVERSION=\"$(VERSION)\" -o $@ $<
@@ -24,5 +25,9 @@ changelog: $(GITDEPS)
 install: checkmedia
 	install -m 755 -D checkmedia tagmedia $(DESTDIR)/usr/bin
 
+package:
+	mkdir -p package
+	git archive --prefix=$(PREFIX)/ $(BRANCH) | xz -c > package/$(PREFIX).tar.xz
+
 clean:
-	rm -f $(OBJ) checkmedia *~
+	rm -rf $(OBJ) package checkmedia *~
