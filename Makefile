@@ -25,9 +25,11 @@ changelog: $(GITDEPS)
 install: checkmedia
 	install -m 755 -D checkmedia tagmedia $(DESTDIR)/usr/bin
 
-package:
+archive: changelog
 	mkdir -p package
-	git archive --prefix=$(PREFIX)/ $(BRANCH) | xz -c > package/$(PREFIX).tar.xz
+	git archive --prefix=$(PREFIX)/ $(BRANCH) > package/$(PREFIX).tar
+	tar -r -f package/$(PREFIX).tar --mode=0664 --owner=root --group=root --mtime="`git show -s --format=%ci`" --transform='s:^:$(PREFIX)/:' VERSION changelog
+	xz -f package/$(PREFIX).tar
 
 clean:
 	rm -rf $(OBJ) package checkmedia *~
