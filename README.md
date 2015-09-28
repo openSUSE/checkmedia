@@ -1,7 +1,8 @@
-Adding digests to iso images
------------------------------
+# checkmedia
 
-Suported digests are: md5, sha1, sha224, sha256, sha384, sha512.
+## Adding digests to iso images
+
+Supported digests are: md5, sha1, sha224, sha256, sha384, sha512.
 
 There are 512 bytes reserved for application specific use in the iso header
 at offset 0x373 (cf. application_data in struct iso_primary_descriptor in
@@ -20,3 +21,12 @@ the result against the stored digest.
 To avoid problems with isohybrid images, checkmedia also does not check the
 first 512 bytes of the iso image (isohybrid writes an MBR there).
 
+## openSUSE Development
+
+The package is automatically submitted from the `master` branch to
+[system:install:head](https://build.opensuse.org/package/show/system:install:head/checkmedia)
+OBS project. From that place it is forwarded to
+[openSUSE Factory](https://build.opensuse.org/project/show/openSUSE:Factory).
+
+You can find more information about this workflow in the [linuxrc-devtools
+documentation](https://github.com/openSUSE/linuxrc-devtools#opensuse-development).
