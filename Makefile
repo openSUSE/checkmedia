@@ -2,7 +2,7 @@ CC      = gcc
 CFLAGS  = -c -g -O2 -Wall
 LDFLAGS =
 
-SRC     = $(wildcard *.c)
+SRC     = $(sort $(wildcard *.c))
 OBJ     = $(SRC:.c=.o)
 
 GIT2LOG := $(shell if [ -x ./git2log ] ; then echo ./git2log --update ; else echo true ; fi)
