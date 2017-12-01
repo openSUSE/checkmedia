@@ -6,6 +6,7 @@
 #include <unistd.h>
 #include <ctype.h>
 #include <fcntl.h>
+#include <stdint.h>
 #include <sys/types.h>
 #include <sys/stat.h>
 
@@ -34,7 +35,8 @@ static void do_digest(char *file);
 static void get_info(char *file, unsigned opt_verbose);
 static char *no_extra_spaces(char *str);
 static void update_progress(unsigned size);
-static void check_mbr(unsigned char *mbr);
+static uint32_t read_le32(const void *ptr);
+static void check_mbr(const unsigned char *mbr);
 
 static void digest_media_init(digest_ctx_t *ctx);
 static void digest_media_process(digest_ctx_t *ctx, unsigned char *buffer, unsigned len);
@@ -464,22 +466,47 @@ void update_progress(unsigned size)
 }
 
 
-void check_mbr(unsigned char *mbr)
+/*
+ * Read 32 bit value at pointer address, little-endian.
+ */
+uint32_t read_le32(const void *ptr)
 {
-  unsigned char *p = mbr + 0x1be;	// partition table
-  unsigned s;
+  const uint8_t *s = ptr;
 
+  return s[0] + (s[1] << 8) + (s[2] << 16) + (s[3] << 24);
+}
+
+
+/*
+ * Analyze MBR to find image size.
+ *
+ * The result is stored in iso.hybrid_size;
+ */
+void check_mbr(const unsigned char *mbr)
+{
+  const uint8_t *p;
+  unsigned idx, image_size;
+  uint32_t start, length, end;
+
+  // check MBR signature
   if(mbr[0x1fe] != 0x55 || mbr[0x1ff] != 0xaa) return;
 
-  if(p[0] & 0x7f) return;
+  /*
+   * Scan all 4 primary partition table entries. Find the maximum used
+   * address.
+   */
+  for(p = mbr + 0x1be, idx = 0, image_size = 0; idx < 4; p += 0x10, idx++) {
+    if(p[0] & 0x7f) continue;	// invalid data
+    if(p[4] == 0) continue;	// empty slot (type == 0)
+    start = read_le32(p + 0x08);
+    length = read_le32(p + 0x0c);
+    end = start + length;
+    if(end > start && end > image_size) image_size = end;
+  }
 
-  s = p[0x0c] + (p[0x0d] << 8) + (p[0x0e] << 16) + (p[0x0f] << 24);
+  if(image_size & 3) return;		// assert 2 kB block size
 
-  if(s <= 64) return;			// at least iso header
-
-  if(s & 3) return;			// 2k, really
-
-  iso.hybrid_size = s >> 1;
+  iso.hybrid_size = image_size >> 1;	// in kB
 }
 
 
