@@ -494,6 +494,8 @@ void check_mbr(const unsigned char *mbr)
   /*
    * Scan all 4 primary partition table entries. Find the maximum used
    * address.
+   *
+   * Table starts at offset 0x1be, with 16 bytes per entry.
    */
   for(p = mbr + 0x1be, idx = 0, image_size = 0; idx < 4; p += 0x10, idx++) {
     if(p[0] & 0x7f) continue;	// invalid data
