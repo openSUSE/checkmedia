@@ -21,6 +21,19 @@ the result against the stored digest.
 To avoid problems with isohybrid images, checkmedia also does not check the
 first 512 bytes of the iso image (isohybrid writes an MBR there).
 
+## Usage
+
+  - add checksum
+```
+tagmedia --sha256 foo.iso
+```
+
+  - verify checksum
+
+```
+checkmedia foo.iso
+```
+
 ## Downloads
 
 Get the latest version from the [openSUSE Build Service](https://software.opensuse.org/package/checkmedia).
