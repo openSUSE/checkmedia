@@ -21,12 +21,32 @@ the result against the stored digest.
 To avoid problems with isohybrid images, checkmedia also does not check the
 first 512 bytes of the iso image (isohybrid writes an MBR there).
 
+## Downloads
+
+Get the latest version from the [openSUSE Build Service](https://software.opensuse.org/package/checkmedia).
+
 ## openSUSE Development
 
-The package is automatically submitted from the `master` branch to
-[system:install:head](https://build.opensuse.org/package/show/system:install:head/checkmedia)
-OBS project. From that place it is forwarded to
-[openSUSE Factory](https://build.opensuse.org/project/show/openSUSE:Factory).
+To build, simply run `make`. Install with `make install`.
 
-You can find more information about this workflow in the [linuxrc-devtools
+Basically every new commit into the master branch of the repository will be auto-submitted
+to all current SUSE products. No further action is needed except accepting the pull request.
+
+Submissions are managed by a SUSE internal [jenkins](https://jenkins.io) node in the InstallTools tab.
+
+Each time a new commit is integrated into the master branch of the repository,
+a new submit request is created to the openSUSE Build Service. The devel project
+is [system:install:head](https://build.opensuse.org/package/show/system:install:head/checkmedia).
+
+`*.changes` and version numbers are auto-generated from git commits, you don't have to worry about this.
+
+The spec file is maintained in the Build Service only. If you need to change it for the `master` branch,
+submit to the
+[devel project](https://build.opensuse.org/package/show/system:install:head/checkmedia)
+in the build service directly.
+
+Development happens exclusively in the `master` branch. The branch is used for all current products.
+
+You can find more information about the changes auto-generation and the
+tools used for jenkis submissions in the [linuxrc-devtools
 documentation](https://github.com/openSUSE/linuxrc-devtools#opensuse-development).
