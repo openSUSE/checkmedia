@@ -33,4 +33,4 @@ archive: changelog
 	xz -f package/$(PREFIX).tar
 
 clean:
-	rm -rf $(OBJ) package checkmedia *~
+	rm -rf $(OBJ) package checkmedia *~ changelog VERSION
