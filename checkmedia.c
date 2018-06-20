@@ -7,6 +7,7 @@
 #include <ctype.h>
 #include <fcntl.h>
 #include <stdint.h>
+#include <getopt.h>
 #include <sys/types.h>
 #include <sys/stat.h>
 
@@ -31,16 +32,17 @@ typedef union {
 } digest_ctx_t;
 
 
-static void do_digest(char *file);
-static void get_info(char *file, unsigned opt_verbose);
-static char *no_extra_spaces(char *str);
-static void update_progress(unsigned size);
-static uint32_t read_le32(const void *ptr);
-static void check_mbr(const unsigned char *mbr);
+void help(void);
+void do_digest(char *file);
+void set_digest(char *value);
+int sanitize_data(char *data, int length);
+void get_info(char *file);
+char *no_extra_spaces(char *str);
+void update_progress(unsigned size);
 
-static void digest_media_init(digest_ctx_t *ctx);
-static void digest_media_process(digest_ctx_t *ctx, unsigned char *buffer, unsigned len);
-static void digest_media_finish(digest_ctx_t *ctx, unsigned char *buffer);
+void digest_media_init(digest_ctx_t *ctx);
+void digest_media_process(digest_ctx_t *ctx, unsigned char *buffer, unsigned len);
+void digest_media_finish(digest_ctx_t *ctx, unsigned char *buffer);
 
 
 struct {
@@ -53,6 +55,7 @@ struct {
     unsigned got_old:1;                         /* got digest stored in iso */
     unsigned got_current:1;                     /* calculated current digest */
     unsigned ok:1;                              /* digest matches */
+    unsigned for_iso;				/* digest over iso image (vs. over partition) */
     unsigned char old[MAX_DIGEST_SIZE];         /* digest stored in iso */
     unsigned char current[MAX_DIGEST_SIZE];     /* digest of iso ex special area */
     unsigned char full[MAX_DIGEST_SIZE];        /* full digest of iso */
@@ -62,100 +65,126 @@ struct {
   unsigned err_ofs;		/* read error pos */
   unsigned size;		/* in kb */
   unsigned hybrid_size;		/* hybrid partition, in kb */
-  unsigned media_nr;		/* media number */
+  unsigned part_start;		/* partition start, in 0.5 kb units */
+  unsigned part_blocks;		/* partition size, in 0.5 kb units */
 
-  char *media_type;		/* media type */
-  char vol_id[33];		/* volume id */
-  char app_id[81];		/* application id */
+  char app_id[0x81];		/* application id */
   char app_data[0x201];		/* app specific data*/
   unsigned pad;			/* pad size in kb */
-  unsigned pad_is_skip:1;	/* skip last sectors */
 } iso;
+
+struct {
+  unsigned verbose:1;
+  unsigned help:1;
+  unsigned version:1;
+  unsigned part:1;
+  unsigned iso:1;
+  char *file_name;
+} opt;
+
+struct option options[] = {
+  { "help", 0, NULL, 'h' },
+  { "verbose", 0, NULL, 'v' },
+  { "version", 0, NULL, 1 },
+  { "iso", 0, NULL, 2 },
+  { "partition", 0, NULL, 3 },
+  { }
+};
 
 
 int main(int argc, char **argv)
 {
   int i;
-  unsigned opt_verbose = 0;
-  unsigned opt_help = 0;
-  unsigned opt_version = 0;
 
-  if(argc > 1) {
-    if(!strcmp(argv[1], "-v") || !strcmp(argv[1], "--verbose")) {
-      opt_verbose = 1;
-      argc--;
-      argv++;
-    }
-    else if(!strcmp(argv[1], "-h") || !strcmp(argv[1], "--help")) {
-      opt_help = 1;
-    }
-    else if(!strcmp(argv[1], "--version")) {
-      opt_version = 1;
+  opterr = 0;
+
+  while((i = getopt_long(argc, argv, "hv", options, NULL)) != -1) {
+    switch(i) {
+      case 1:
+        opt.version = 1;
+        break;
+
+      case 2:
+        opt.iso = 1;
+        break;
+
+      case 3:
+        opt.part = 1;
+        break;
+
+      case 'v':
+        opt.verbose = 1;
+        break;
+
+      default:
+        help();
+        return i == 'h' ? 0 : 1;
     }
   }
 
-  if(opt_help || argc != 2) {
-    printf(
-      "usage: checkmedia [options] iso\n"
-      "Check SUSE installation media.\n"
-      "Options:\n"
-      "  --verbose\tshow some more info\n"
-      "  --version\tdisplay version number\n"
-      "  --help\tshort help text\n"
-    );
-
+  if(argc == optind + 1) {
+    opt.file_name = argv[optind];
+  }
+  else {
+    help();
     return 1;
   }
 
-  if(opt_version) {
+  if(opt.version) {
     printf(VERSION "\n");
 
     return 0;
   }
 
-  get_info(argv[1], opt_verbose);
+  get_info(opt.file_name);
 
   if(iso.err) {
-    printf("%s: not an iso\n", argv[1]);
+    printf("%s: not an iso\n", opt.file_name);
 
     return 1;
   }
 
-  if(!iso.digest.type) {
-    printf("%s: no digest found\n", argv[1]);
+  if(iso.digest.type == digest_none) {
+    printf("%s: no digest found\n", opt.file_name);
 
     return 1;
   }
 
-  printf("    app: %s\n  media: %s%d\n   size: %u kB\n",
+  printf("      app: %s\n iso size: %u kB\n",
     iso.app_id,
-    iso.media_type,
-    iso.media_nr ?: 1,
     iso.size
   );
 
-  if(iso.hybrid_size) printf(" hybrid: %u kB\n", iso.hybrid_size);
+  if(iso.part_blocks) {
+    printf(
+      "partition: start %u%s kB, size %u%s kB\n",
+      iso.part_start >> 1,
+      (iso.part_start & 1) ? ".5" : "",
+      iso.part_blocks >> 1,
+      (iso.part_blocks & 1) ? ".5" : ""
+    );
+  }
 
-  printf("    pad: %u kB\n", iso.pad);
+  printf("      pad: %u kB\n", iso.pad);
 
   if(iso.pad >= iso.size) {
     printf("wrong padding value\n");
     return 1;
   }
 
-  if(opt_verbose) {
-    printf("    ref: ");
+  if(opt.verbose) {
+    printf("      ref: ");
     if(iso.digest.got_old) for(i = 0; i < iso.digest.size; i++) printf("%02x", iso.digest.old[i]);
     printf("\n");
   }
 
-  if(!iso.err) do_digest(argv[1]);
+  if(!iso.err) do_digest(opt.file_name);
 
   if(iso.err && iso.err_ofs) {
-    printf("   err: sector %u\n", iso.err_ofs >> 1);
+    printf("      err: sector %u\n", iso.err_ofs >> 1);
   }
 
-  printf("  check: ");
+  printf("   result: ");
   if(iso.digest.got_old) {
     if(iso.digest.ok) {
       printf("%ssum ok\n", iso.digest.name);
@@ -168,14 +197,14 @@ int main(int argc, char **argv)
     printf("%ssum not checked\n", iso.digest.name);
   }
 
-  if(iso.digest.got_current && opt_verbose) {
-    printf("%6s*: ", iso.digest.name);
+  if(iso.digest.got_current && opt.verbose) {
+    printf("%8s*: ", iso.digest.name);
     for(i = 0; i < iso.digest.size; i++) printf("%02x", iso.digest.current[i]);
     printf("\n");
   }
 
   if(iso.digest.got_current) {
-    printf("%7s: ", iso.digest.name);
+    printf("%9s: ", iso.digest.name);
     for(i = 0; i < iso.digest.size; i++) printf("%02x", iso.digest.full[i]);
     printf("\n");
   }
@@ -185,7 +214,35 @@ int main(int argc, char **argv)
 
 
 /*
- * Calculate digest over iso.
+ * Display short usage message.
+ */
+void help()
+{
+  printf(
+    "Usage: checkmedia [OPTIONS] FILE\n"
+    "\n"
+    "Check SUSE installation media.\n"
+   "\n"
+    "Options:\n"
+    "      --iso             Verify whole ISO image.\n"
+    "      --partition       Verify only partition.\n"
+    "\n"
+    "      --version         Show checkmedia version.\n"
+    "  -v, --verbose         Show more detailed info.\n"
+    "  -h, --help            Show this text.\n"
+    "\n"
+    "Usually both a checksum over the whole ISO image and the installation\n"
+    "partition are available. In this case per default the whole image is\n"
+    "checked.\n"
+    "\n"
+    "You can use the --iso and --partition options to force verification\n"
+    "using either checksum.\n"
+  );
+}
+
+
+/*
+ * Calculate digest over image.
  *
  * Normal digest, except that we assume
  *   - 0x0000 - 0x01ff is filled with zeros (0)
@@ -201,7 +258,7 @@ void do_digest(char *file)
   
   if((fd = open(file, O_RDONLY | O_LARGEFILE)) == -1) return;
 
-  printf("  check:     "); fflush(stdout);
+  printf(" checking:     "); fflush(stdout);
 
   digest_media_init(&iso.digest.ctx);
   digest_media_init(&iso.digest.full_ctx);
@@ -243,7 +300,7 @@ void do_digest(char *file)
   if(!err) {
     memset(buffer, 0, 2 << 10);		/* 2k */
     for(u = 0; u < (iso.pad >> 1); u++) {
-      if(!iso.pad_is_skip) digest_media_process(&iso.digest.ctx, buffer, 2 << 10);
+      digest_media_process(&iso.digest.ctx, buffer, 2 << 10);
       digest_media_process(&iso.digest.full_ctx, buffer, 2 << 10);
 
       update_progress(iso.size - iso.pad + ((u + 1) << 1));
@@ -253,7 +310,6 @@ void do_digest(char *file)
   if(
     !err &&
     iso.hybrid_size > iso.size &&
-    !iso.pad_is_skip &&
     (iso.hybrid_size - iso.size) < 16*1024	// allow for sane padding amounts (up to 16MB)
   ) {
     for(u = 0; u < ((iso.hybrid_size - iso.size) >> 1); u++) {
@@ -279,15 +335,112 @@ void do_digest(char *file)
 
 
 /*
- * Read all kinds of iso header info.
+ * Set digest type and value.
+ *
+ * value: hex string
+ *
+ * Digest type is inferred from digest length.
  */
-void get_info(char *file, unsigned opt_verbose)
+void set_digest(char *value)
+{
+  int len;
+  unsigned u, u1;
+
+  if(!value) return;
+
+  len = strlen(value);
+
+  // invalid length
+  if(len & 1) len = 0;
+
+  // binary size
+  len >>= 1;
+
+  switch(len) {
+    case MD5_DIGEST_SIZE:
+      iso.digest.type = digest_md5;
+      iso.digest.name = "md5";
+      break;
+
+    case SHA1_DIGEST_SIZE:
+      iso.digest.type = digest_sha1;
+      iso.digest.name = "sha1";
+      break;
+
+    case SHA224_DIGEST_SIZE:
+      iso.digest.type = digest_sha224;
+      iso.digest.name = "sha224";
+      break;
+
+    case SHA256_DIGEST_SIZE:
+      iso.digest.type = digest_sha256;
+      iso.digest.name = "sha256";
+      break;
+
+    case SHA384_DIGEST_SIZE:
+      iso.digest.type = digest_sha384;
+      iso.digest.name = "sha384";
+      break;
+
+    case SHA512_DIGEST_SIZE:
+      iso.digest.type = digest_sha512;
+      iso.digest.name = "sha512";
+      break;
+
+    default:
+      iso.digest.type = digest_none;
+      len = 0;
+  }
+
+  iso.digest.size = len;
+
+  for(u = 0; u < iso.digest.size; u++, value += 2) {
+    if(sscanf(value, "%2x", &u1) == 1) {
+      iso.digest.old[u] = u1;
+    }
+    else {
+      break;
+    }
+  }
+
+  if(iso.digest.size && u == iso.digest.size) iso.digest.got_old = 1;
+}
+
+
+/*
+ * Do basic validation on the data and cut off trailing spcaes.
+ *
+ *
+ */
+int sanitize_data(char *data, int length)
+{
+  char *s;
+
+  for(s = data + length; s >= data; *s-- = 0) {
+    if(*s != 0 && *s != ' ') break;
+  }
+
+  // printable ascii
+  for(s = data; *s; s++) {
+    if(*s < 0x20) return 0;
+  }
+
+  return 1;
+}
+
+
+/*
+ * Read iso header and fill global iso struct.
+ *
+ * Note: checksum info is kept in iso.app_data[].
+ *
+ * If in doubt about the ISO9660 layout, check http://alumnus.caltech.edu/~pje/iso9660.html
+ */
+void get_info(char *file)
 {
   int fd, ok = 0;
-  unsigned char buf[4];
-  char *s, *key, *value, *next;
-  unsigned u, u1, idx;
-  unsigned char mbr[512];
+  unsigned char buf[8];
+  char *key, *value, *next;
 
   memset(&iso, 0, sizeof iso);
 
@@ -297,66 +450,64 @@ void get_info(char *file, unsigned opt_verbose)
 
   if((fd = open(file, O_RDONLY | O_LARGEFILE)) == -1) return;
 
-  if(read(fd, mbr, sizeof mbr) == sizeof mbr) check_mbr(mbr);
-
-  if(
-    lseek(fd, 0x8028, SEEK_SET) == 0x8028 &&
-    read(fd, iso.vol_id, 32) == 32
-  ) {
-    iso.vol_id[sizeof iso.vol_id - 1] = 0;
-    ok++;
-  }
-
+  /*
+   * ISO size is stored as both little- and big-endian values.
+   *
+   * Read both and compare as consistency check.
+   */
   if(
     lseek(fd, 0x8050, SEEK_SET) == 0x8050 &&
-    read(fd, buf, 4) == 4
+    read(fd, buf, 8) == 8
   ) {
-    iso.size = 2*(buf[0] + (buf[1] << 8) + (buf[2] << 16) + (buf[3] << 24));
-    ok++;
+    unsigned little = 2*(buf[0] + (buf[1] << 8) + (buf[2] << 16) + (buf[3] << 24));
+    unsigned big = 2*(buf[7] + (buf[6] << 8) + (buf[5] << 16) + (buf[4] << 24));
+
+    if(little && little == big) {
+      iso.size = little;
+      ok++;
+    }
   }
 
+  /*
+   * Application id is set to some string identifying the media.
+   *
+   * Read it and show it to the user later.
+   */
   if(
     lseek(fd, 0x823e, SEEK_SET) == 0x823e &&
-    read(fd, iso.app_id, 80) == 80
+    read(fd, iso.app_id, sizeof iso.app_id - 1) == sizeof iso.app_id - 1
   ) {
     iso.app_id[sizeof iso.app_id - 1] = 0;
-    ok++;
+    if(sanitize_data(iso.app_id, sizeof iso.app_id - 1)) {
+      char *s;
+
+      if(!strncmp(iso.app_id, "MKISOFS", sizeof "MKISOFS" - 1)) *iso.app_id = 0;
+      if((s = strrchr(iso.app_id, '#'))) *s = 0;
+
+      ok++;
+    }
   }
 
+  /*
+   * Application specific data - there's no restriction on what to put there.
+   *
+   * We use it to store the digests over the medium.
+   *
+   * Read it, to be parsed later.
+   */
   if(
     lseek(fd, 0x8373, SEEK_SET) == 0x8373 &&
-    read(fd, iso.app_data, 0x200) == 0x200
+    read(fd, iso.app_data, sizeof iso.app_data - 1) == sizeof iso.app_data - 1
   ) {
     iso.app_data[sizeof iso.app_data - 1] = 0;
-    ok++;
+    if(sanitize_data(iso.app_data, sizeof iso.app_data - 1)) ok++;
   }
 
   close(fd);
 
-  if(ok != 4) return;
-
-  iso.media_type = "CD";
+  if(ok != 3) return;
 
   iso.err = 0;
-
-  for(s = iso.app_id + sizeof iso.app_id - 1; s >= iso.app_id; *s-- = 0) {
-    if(*s != 0 && *s != ' ') break;
-  }
-
-  if(!strncmp(iso.app_id, "MKISOFS", sizeof "MKISOFS" - 1)) *iso.app_id = 0;
-
-  if((s = strrchr(iso.app_id, '#'))) *s = 0;
-
-  if(strstr(iso.app_id, "DVD") || iso.size >= 1 << 20) iso.media_type = "DVD";
-
-  for(s = iso.vol_id + sizeof iso.vol_id - 1; s >= iso.vol_id; *s-- = 0) {
-    if(*s != 0 && *s != ' ') break;
-  }
-
-  if(*iso.vol_id == 'S') {
-    idx = iso.vol_id[strlen(iso.vol_id) - 1];
-    if(idx >= '1' && idx <= '9') iso.media_nr = idx - '0';
-  }
 
   for(key = next = iso.app_data; next; key = next) {
     value = strchr(key, '=');
@@ -369,63 +520,46 @@ void get_info(char *file, unsigned opt_verbose)
     key = no_extra_spaces(key);
     value = no_extra_spaces(value);
 
-    if(opt_verbose) {
-      printf("    raw: key = \"%s\", value = \"%s\"\n", key, value ?: "");
+    if(opt.verbose) {
+      printf("      raw: key = \"%s\", value = \"%s\"\n", key, value ?: "");
     }
 
-    if((!strcasecmp(key, "md5sum") || !strcasecmp(key, "iso md5sum"))) {
-      iso.digest.type = digest_md5;
-      iso.digest.size = MD5_DIGEST_SIZE;
-      iso.digest.name = "md5";
-    }
-    else if(!strcasecmp(key, "sha1sum")) {
-      iso.digest.type = digest_sha1;
-      iso.digest.size = SHA1_DIGEST_SIZE;
-      iso.digest.name = "sha1";
-    }
-    else if(!strcasecmp(key, "sha224sum")) {
-      iso.digest.type = digest_sha224;
-      iso.digest.size = SHA224_DIGEST_SIZE;
-      iso.digest.name = "sha224";
-    }
-    else if(!strcasecmp(key, "sha256sum")) {
-      iso.digest.type = digest_sha256;
-      iso.digest.size = SHA256_DIGEST_SIZE;
-      iso.digest.name = "sha256";
-    }
-    else if(!strcasecmp(key, "sha384sum")) {
-      iso.digest.type = digest_sha384;
-      iso.digest.size = SHA384_DIGEST_SIZE;
-      iso.digest.name = "sha384";
-    }
-    else if(!strcasecmp(key, "sha512sum")) {
-      iso.digest.type = digest_sha512;
-      iso.digest.size = SHA512_DIGEST_SIZE;
-      iso.digest.name = "sha512";
-    }
-
-    if(iso.digest.type && value) {
-      if(strlen(value) >= iso.digest.size) {
-        for(u = 0 ; u < iso.digest.size; u++, value += 2) {
-           if(sscanf(value, "%2x", &u1) == 1) {
-             iso.digest.old[u] = u1;
-           }
-           else {
-             break;
-           }
+    if(
+      !strcasecmp(key, "md5sum") ||
+      !strcasecmp(key, "iso md5sum") ||
+      !strcasecmp(key, "sha1sum") ||
+      !strcasecmp(key, "sha224sum") ||
+      !strcasecmp(key, "sha256sum") ||
+      !strcasecmp(key, "sha384sum") ||
+      !strcasecmp(key, "sha512sum")
+    ) {
+      if(!opt.part) {
+        set_digest(value);
+        if(iso.digest.type != digest_none) {
+          iso.digest.for_iso = 1;
+          opt.iso = 1;
         }
-        if(u == iso.digest.size) iso.digest.got_old = 1;
       }
     }
+    else if(!strcasecmp(key, "partition")) {
+      if(value && isdigit(*value)) {
+        unsigned start = strtoul(value, &value, 0);
+        if(*value++ == ',') {
+          unsigned blocks = strtoul(value, &value, 0);
+          if(*value++ == ',') {
+            iso.part_start = start;
+            iso.part_blocks = blocks;
 
-    if(value && !strcasecmp(key, "pad")) {
-      if(isdigit(*value)) iso.pad = strtoul(value, NULL, 0) << 1;
+            if(!opt.iso && !iso.digest.for_iso) {
+              set_digest(value);
+            }
+          }
+        }
+      }
     }
-
-    if(value && !strcasecmp(key, "skipsectors")) {
-      if(isdigit(*value)) {
+    else if(!strcasecmp(key, "pad")) {
+      if(value && isdigit(*value)) {
         iso.pad = strtoul(value, NULL, 0) << 1;
-        iso.pad_is_skip = 1;
       }
     }
   }
@@ -433,7 +567,8 @@ void get_info(char *file, unsigned opt_verbose)
 
 
 /*
- * Remove leading & trailing spaces.
+ * Helper function to remove leading & trailing spaces.
+ *
  * Modifies str!
  */
 char *no_extra_spaces(char *str)
@@ -451,6 +586,9 @@ char *no_extra_spaces(char *str)
 }
 
 
+/*
+ * Update progress indicator.
+ */
 void update_progress(unsigned size)
 {
   static int last_percent = 0;
@@ -467,51 +605,10 @@ void update_progress(unsigned size)
 
 
 /*
- * Read 32 bit value at pointer address, little-endian.
- */
-uint32_t read_le32(const void *ptr)
-{
-  const uint8_t *s = ptr;
-
-  return s[0] + (s[1] << 8) + (s[2] << 16) + (s[3] << 24);
-}
-
-
-/*
- * Analyze MBR to find image size.
+ * Wrapper function for *_init_ctx() picking the correct digest.
  *
- * The result is stored in iso.hybrid_size;
+ * These functions must be called to start the digest calculation.
  */
-void check_mbr(const unsigned char *mbr)
-{
-  const uint8_t *p;
-  unsigned idx, image_size;
-  uint32_t start, length, end;
-
-  // check MBR signature
-  if(mbr[0x1fe] != 0x55 || mbr[0x1ff] != 0xaa) return;
-
-  /*
-   * Scan all 4 primary partition table entries. Find the maximum used
-   * address.
-   *
-   * Table starts at offset 0x1be, with 16 bytes per entry.
-   */
-  for(p = mbr + 0x1be, idx = 0, image_size = 0; idx < 4; p += 0x10, idx++) {
-    if(p[0] & 0x7f) continue;	// invalid data
-    if(p[4] == 0) continue;	// empty slot (type == 0)
-    start = read_le32(p + 0x08);
-    length = read_le32(p + 0x0c);
-    end = start + length;
-    if(end > start && end > image_size) image_size = end;
-  }
-
-  if(image_size & 3) return;		// assert 2 kB block size
-
-  iso.hybrid_size = image_size >> 1;	// in kB
-}
-
-
 void digest_media_init(digest_ctx_t *ctx)
 {
   switch(iso.digest.type) {
@@ -540,6 +637,10 @@ void digest_media_init(digest_ctx_t *ctx)
 
 
 /*
+ * Wrapper function for *_process_block() picking the correct digest.
+ *
+ * These functions do the actual digest calculation.
+ *
  * Note: digest_media_process() *requires* buffer sizes to be a
  * multiple of 128. Otherwise use XXX_process_bytes().
  */
@@ -570,6 +671,11 @@ void digest_media_process(digest_ctx_t *ctx, unsigned char *buffer, unsigned len
 }
 
 
+/*
+ * Wrapper function for *_finish_ctx() picking the correct digest.
+ *
+ * These functions must be called to finalize the digest calculation.
+ */
 void digest_media_finish(digest_ctx_t *ctx, unsigned char *buffer)
 {
   switch(iso.digest.type) {
@@ -595,4 +701,3 @@ void digest_media_finish(digest_ctx_t *ctx, unsigned char *buffer)
       break;
   }
 }
-
