@@ -33,8 +33,9 @@ typedef union {
 
 
 void help(void);
+void show_result(char *name, unsigned checked, unsigned ok);
 void do_digest(char *file);
-void set_digest(char *value);
+unsigned set_digest(char *value, unsigned char *buf);
 int sanitize_data(char *data, int length);
 void get_info(char *file);
 char *no_extra_spaces(char *str);
@@ -47,30 +48,36 @@ void digest_media_finish(digest_ctx_t *ctx, unsigned char *buffer);
 
 struct {
   struct {
-    digest_ctx_t ctx;
+    digest_ctx_t iso_ctx;
+    digest_ctx_t part_ctx;
     digest_ctx_t full_ctx;
     digest_t type;                              /* digest type */
     char *name;                                 /* digest name */
-    int size;                                   /* digest size */
-    unsigned got_old:1;                         /* got digest stored in iso */
-    unsigned got_current:1;                     /* calculated current digest */
-    unsigned ok:1;                              /* digest matches */
-    unsigned for_iso;				/* digest over iso image (vs. over partition) */
-    unsigned char old[MAX_DIGEST_SIZE];         /* digest stored in iso */
-    unsigned char current[MAX_DIGEST_SIZE];     /* digest of iso ex special area */
-    unsigned char full[MAX_DIGEST_SIZE];        /* full digest of iso */
+    unsigned got_iso_ref:1;                     /* got iso digest from tags */
+    unsigned got_part_ref:1;                    /* got partition digest from tags */
+    unsigned got_iso:1;                         /* iso digest has been calculated */
+    unsigned got_part:1;                        /* partition digest has been calculated */
+    unsigned got_full:1;                        /* full image digest has been calculated */
+    unsigned iso_ok:1;                          /* iso digest matches */
+    unsigned part_ok:1;                         /* partition digest matches */
+    int size;                                   /* (binary) digest size - refers to the following arrays */
+    unsigned char iso_ref[MAX_DIGEST_SIZE];     /* iso digest from tags */
+    unsigned char part_ref[MAX_DIGEST_SIZE];    /* partition digest from tags */
+    unsigned char iso[MAX_DIGEST_SIZE];         /* calculated iso digest */
+    unsigned char part[MAX_DIGEST_SIZE];        /* calculated partition digest */
+    unsigned char full[MAX_DIGEST_SIZE];        /* calculated full image digest */
   } digest;
 
   unsigned err:1;		/* some error */
   unsigned err_ofs;		/* read error pos */
-  unsigned size;		/* in kb */
-  unsigned hybrid_size;		/* hybrid partition, in kb */
-  unsigned part_start;		/* partition start, in 0.5 kb units */
-  unsigned part_blocks;		/* partition size, in 0.5 kb units */
+  unsigned iso_size;		/* iso size in kB */
+  unsigned full_size;		/* full image size, in kB */
+  unsigned part_start;		/* partition start, in 0.5 kB units */
+  unsigned part_blocks;		/* partition size, in 0.5 kB units */
 
   char app_id[0x81];		/* application id */
   char app_data[0x201];		/* app specific data*/
-  unsigned pad;			/* pad size in kb */
+  unsigned pad;			/* pad size in kB */
 } iso;
 
 struct {
@@ -150,14 +157,21 @@ int main(int argc, char **argv)
     return 1;
   }
 
-  printf("      app: %s\n iso size: %u kB\n",
+  printf("        app: %s\n   iso size: %u kB\n",
     iso.app_id,
-    iso.size
+    iso.iso_size
   );
+
+  printf("        pad: %u kB\n", iso.pad);
+
+  if(iso.pad >= iso.iso_size) {
+    printf("wrong padding value\n");
+    return 1;
+  }
 
   if(iso.part_blocks) {
     printf(
-      "partition: start %u%s kB, size %u%s kB\n",
+      "  partition: start %u%s kB, size %u%s kB\n",
       iso.part_start >> 1,
       (iso.part_start & 1) ? ".5" : "",
       iso.part_blocks >> 1,
@@ -165,51 +179,58 @@ int main(int argc, char **argv)
     );
   }
 
-  printf("      pad: %u kB\n", iso.pad);
-
-  if(iso.pad >= iso.size) {
-    printf("wrong padding value\n");
-    return 1;
-  }
+  if(iso.full_size && opt.verbose) printf("  full size: %u kB\n", iso.full_size);
 
   if(opt.verbose) {
-    printf("      ref: ");
-    if(iso.digest.got_old) for(i = 0; i < iso.digest.size; i++) printf("%02x", iso.digest.old[i]);
-    printf("\n");
+    if(iso.digest.got_iso_ref) {
+      printf("    iso ref: ");
+      for(i = 0; i < iso.digest.size; i++) printf("%02x", iso.digest.iso_ref[i]);
+      printf("\n");
+    }
+    if(iso.digest.got_part_ref) {
+      printf("   part ref: ");
+      for(i = 0; i < iso.digest.size; i++) printf("%02x", iso.digest.part_ref[i]);
+      printf("\n");
+    }
   }
 
   if(!iso.err) do_digest(opt.file_name);
 
   if(iso.err && iso.err_ofs) {
-    printf("      err: sector %u\n", iso.err_ofs >> 1);
+    printf("        err: sector %u\n", iso.err_ofs >> 1);
   }
 
-  printf("   result: ");
-  if(iso.digest.got_old) {
-    if(iso.digest.ok) {
-      printf("%ssum ok\n", iso.digest.name);
-    }
-    else {
-      printf("%ssum wrong\n", iso.digest.name);
-    }
+  printf("     result: ");
+  i = 0;
+  if(iso.iso_size) {
+    show_result("iso", iso.digest.got_iso_ref, iso.digest.iso_ok);
+    i = 1;
   }
-  else {
-    printf("%ssum not checked\n", iso.digest.name);
+  if(iso.part_blocks) {
+    if(i) printf(", ");
+    show_result("partition", iso.digest.got_part_ref, iso.digest.part_ok);
   }
+  printf("\n");
 
-  if(iso.digest.got_current && opt.verbose) {
-    printf("%8s*: ", iso.digest.name);
-    for(i = 0; i < iso.digest.size; i++) printf("%02x", iso.digest.current[i]);
+  if(iso.digest.got_iso && opt.verbose) {
+    printf(" iso %6s: ", iso.digest.name);
+    for(i = 0; i < iso.digest.size; i++) printf("%02x", iso.digest.iso[i]);
     printf("\n");
   }
 
-  if(iso.digest.got_current) {
-    printf("%9s: ", iso.digest.name);
+  if(iso.digest.got_part && opt.verbose) {
+    printf("part %6s: ", iso.digest.name);
+    for(i = 0; i < iso.digest.size; i++) printf("%02x", iso.digest.part[i]);
+    printf("\n");
+  }
+
+  if(iso.digest.got_full) {
+    printf("%11s: ", iso.digest.name);
     for(i = 0; i < iso.digest.size; i++) printf("%02x", iso.digest.full[i]);
     printf("\n");
   }
 
-  return iso.digest.ok ? 0 : 1;
+  return iso.digest.iso_ok || iso.digest.part_ok ? 0 : 1;
 }
 
 
@@ -241,6 +262,13 @@ void help()
 }
 
 
+void show_result(char *name, unsigned checked, unsigned ok)
+{
+  printf("%s %s ", name, iso.digest.name);
+  printf(checked ? ok ? "ok" : "wrong" : "unchecked");
+}
+
+
 /*
  * Calculate digest over image.
  *
@@ -252,15 +280,16 @@ void do_digest(char *file)
 {
   unsigned char buffer[64 << 10]; /* at least 36k! */
   int fd, err = 0;
-  unsigned chunks = (iso.size - iso.pad) / (sizeof buffer >> 10);
+  unsigned chunks = (iso.iso_size - iso.pad) / (sizeof buffer >> 10);
   unsigned chunk, u;
-  unsigned last_size = ((iso.size - iso.pad) % (sizeof buffer >> 10)) << 10;
+  unsigned last_size = ((iso.iso_size - iso.pad) % (sizeof buffer >> 10)) << 10;
   
   if((fd = open(file, O_RDONLY | O_LARGEFILE)) == -1) return;
 
-  printf(" checking:     "); fflush(stdout);
+  printf("   checking:     "); fflush(stdout);
 
-  digest_media_init(&iso.digest.ctx);
+  digest_media_init(&iso.digest.iso_ctx);
+  digest_media_init(&iso.digest.part_ctx);
   digest_media_init(&iso.digest.full_ctx);
 
   for(chunk = 0; chunk < chunks; chunk++) {
@@ -278,7 +307,7 @@ void do_digest(char *file)
       memset(buffer + 0x8373, ' ', 0x200);
     }
 
-    digest_media_process(&iso.digest.ctx, buffer, sizeof buffer);
+    digest_media_process(&iso.digest.iso_ctx, buffer, sizeof buffer);
 
     update_progress((chunk + 1) * (sizeof buffer >> 10));
   }
@@ -290,44 +319,60 @@ void do_digest(char *file)
       iso.err_ofs = (u >> 10) + chunk * (sizeof buffer >> 10);
     }
     else {
-      digest_media_process(&iso.digest.ctx, buffer, last_size);
+      digest_media_process(&iso.digest.iso_ctx, buffer, last_size);
       digest_media_process(&iso.digest.full_ctx, buffer, last_size);
 
-      update_progress(iso.size - iso.pad);
+      update_progress(iso.iso_size - iso.pad);
     }
   }
 
   if(!err) {
     memset(buffer, 0, 2 << 10);		/* 2k */
     for(u = 0; u < (iso.pad >> 1); u++) {
-      digest_media_process(&iso.digest.ctx, buffer, 2 << 10);
+      digest_media_process(&iso.digest.iso_ctx, buffer, 2 << 10);
       digest_media_process(&iso.digest.full_ctx, buffer, 2 << 10);
 
-      update_progress(iso.size - iso.pad + ((u + 1) << 1));
+      update_progress(iso.iso_size - iso.pad + ((u + 1) << 1));
     }
   }
 
   if(
     !err &&
-    iso.hybrid_size > iso.size &&
-    (iso.hybrid_size - iso.size) < 16*1024	// allow for sane padding amounts (up to 16MB)
+    iso.full_size > iso.iso_size &&
+    (iso.full_size - iso.iso_size) < 16*1024	// allow for sane padding amounts (up to 16 MB)
   ) {
-    for(u = 0; u < ((iso.hybrid_size - iso.size) >> 1); u++) {
+    for(u = 0; u < ((iso.full_size - iso.iso_size) >> 1); u++) {
       digest_media_process(&iso.digest.full_ctx, buffer, 2 << 10);
     }
   }
 
-  digest_media_finish(&iso.digest.ctx, iso.digest.current);
+  digest_media_finish(&iso.digest.iso_ctx, iso.digest.iso);
+  digest_media_finish(&iso.digest.part_ctx, iso.digest.part);
   digest_media_finish(&iso.digest.full_ctx, iso.digest.full);
 
   printf("\n");
 
-  if(err) iso.err = 1;
+  if(err) {
+    iso.err = 1;
+  }
+  else {
+    iso.digest.got_iso = 1;
+    iso.digest.got_part = 1;
+    iso.digest.got_full = 1;
 
-  iso.digest.got_current = 1;
+    if(
+      iso.digest.got_iso_ref &&
+      !memcmp(iso.digest.iso, iso.digest.iso_ref, iso.digest.size)
+    ) {
+      iso.digest.iso_ok = 1;
+    }
 
-  if(iso.digest.got_old && !memcmp(iso.digest.current, iso.digest.old, iso.digest.size)) {
-    iso.digest.ok = 1;
+    if(
+      iso.digest.got_part_ref &&
+      !memcmp(iso.digest.part, iso.digest.part_ref, iso.digest.size)
+    ) {
+      iso.digest.part_ok = 1;
+    }
   }
 
   close(fd);
@@ -338,15 +383,18 @@ void do_digest(char *file)
  * Set digest type and value.
  *
  * value: hex string
+ * buf: buffer to store digest
+ *
+ * return: 1 if valid, else 0
  *
  * Digest type is inferred from digest length.
  */
-void set_digest(char *value)
+unsigned set_digest(char *value, unsigned char *buf)
 {
   int len;
   unsigned u, u1;
 
-  if(!value) return;
+  if(!value) return 0;
 
   len = strlen(value);
 
@@ -392,18 +440,23 @@ void set_digest(char *value)
       len = 0;
   }
 
+  if(!len) return 0;
+
+  // only one digest type
+  if(iso.digest.size && len != iso.digest.size) return 0;
+
   iso.digest.size = len;
 
   for(u = 0; u < iso.digest.size; u++, value += 2) {
     if(sscanf(value, "%2x", &u1) == 1) {
-      iso.digest.old[u] = u1;
+      buf[u] = u1;
     }
     else {
-      break;
+      return 0;
     }
   }
 
-  if(iso.digest.size && u == iso.digest.size) iso.digest.got_old = 1;
+  return 1;
 }
 
 
@@ -441,6 +494,7 @@ void get_info(char *file)
   int fd, ok = 0;
   unsigned char buf[8];
   char *key, *value, *next;
+  struct stat sb;
 
   memset(&iso, 0, sizeof iso);
 
@@ -449,6 +503,10 @@ void get_info(char *file)
   if(!file) return;
 
   if((fd = open(file, O_RDONLY | O_LARGEFILE)) == -1) return;
+
+  if(!fstat(fd, &sb) && S_ISREG(sb.st_mode)) {
+    iso.full_size = sb.st_size >> 10;
+  }
 
   /*
    * ISO size is stored as both little- and big-endian values.
@@ -463,7 +521,7 @@ void get_info(char *file)
     unsigned big = 2*(buf[7] + (buf[6] << 8) + (buf[5] << 16) + (buf[4] << 24));
 
     if(little && little == big) {
-      iso.size = little;
+      iso.iso_size = little;
       ok++;
     }
   }
@@ -482,6 +540,7 @@ void get_info(char *file)
       char *s;
 
       if(!strncmp(iso.app_id, "MKISOFS", sizeof "MKISOFS" - 1)) *iso.app_id = 0;
+      if(!strncmp(iso.app_id, "GENISOIMAGE", sizeof "GENISOIMAGE" - 1)) *iso.app_id = 0;
       if((s = strrchr(iso.app_id, '#'))) *s = 0;
 
       ok++;
@@ -521,7 +580,7 @@ void get_info(char *file)
     value = no_extra_spaces(value);
 
     if(opt.verbose) {
-      printf("      raw: key = \"%s\", value = \"%s\"\n", key, value ?: "");
+      printf("       tags: key = \"%s\", value = \"%s\"\n", key, value ?: "");
     }
 
     if(
@@ -533,13 +592,7 @@ void get_info(char *file)
       !strcasecmp(key, "sha384sum") ||
       !strcasecmp(key, "sha512sum")
     ) {
-      if(!opt.part) {
-        set_digest(value);
-        if(iso.digest.type != digest_none) {
-          iso.digest.for_iso = 1;
-          opt.iso = 1;
-        }
-      }
+      iso.digest.got_iso_ref = set_digest(value, iso.digest.iso_ref);
     }
     else if(!strcasecmp(key, "partition")) {
       if(value && isdigit(*value)) {
@@ -550,9 +603,7 @@ void get_info(char *file)
             iso.part_start = start;
             iso.part_blocks = blocks;
 
-            if(!opt.iso && !iso.digest.for_iso) {
-              set_digest(value);
-            }
+            iso.digest.got_part_ref = set_digest(value, iso.digest.part_ref);
           }
         }
       }
@@ -562,6 +613,12 @@ void get_info(char *file)
         iso.pad = strtoul(value, NULL, 0) << 1;
       }
     }
+  }
+
+  // if we didn't get the image size via stat() above, try other ways
+  if(!iso.full_size) {
+    iso.full_size = (iso.part_start + iso.part_blocks) >> 1;
+    if(!iso.full_size) iso.full_size = iso.iso_size;
   }
 }
 
@@ -596,7 +653,7 @@ void update_progress(unsigned size)
 
   if(!size) last_percent = 0;
 
-  percent = (size * 100) / (iso.size ?: 1);
+  percent = (size * 100) / (iso.iso_size ?: 1);
   if(percent != last_percent) {
     last_percent = percent;
     printf("\x08\x08\x08\x08%3d%%", percent); fflush(stdout);
