@@ -5,14 +5,11 @@
 
 void help(void);
 void progress(unsigned percent);
-void show_result(char *name, char *digest_name, unsigned checked, unsigned ok);
 
 struct {
   unsigned verbose:1;
   unsigned help:1;
   unsigned version:1;
-  unsigned part:1;
-  unsigned iso:1;
   char *file_name;
 } opt;
 
@@ -74,19 +71,25 @@ int main(int argc, char **argv)
     return 1;
   }
 
-  if(media->digest.type == digest_none) {
+  if(!(digest_valid(media->digest.iso) || digest_valid(media->digest.part))) {
     printf("%s: no digest found\n", media->file_name);
     return 1;
   }
 
-  if(media->pad >= media->iso_size) {
+  if(media->pad_blocks >= media->iso_blocks) {
     printf("padding (%u) bigger than image size\n", media->pad);
     return 1;
   }
 
   if(media->app_id) printf("        app: %s\n", media->app_id);
-  if(media->iso_size) printf("   iso size: %u kB\n", media->iso_size);
-  if(media->pad) printf("        pad: %u kB\n", media->pad);
+  if(media->iso_blocks) {
+    printf(
+      "   iso size: %u%s kB\n",
+      media->iso_blocks >> 1,
+      (media->iso_blocks & 1) ? ".5" : ""
+    );
+  }
+  if(media->pad_blocks) printf("        pad: %u kB\n", media->pad_blocks >> 1);
 
   if(media->part_blocks) {
     printf(
@@ -99,17 +102,19 @@ int main(int argc, char **argv)
   }
 
   if(opt.verbose) {
-    if(media->full_size) printf("  full size: %u kB\n", media->full_size);
-
-    if(media->got_iso_ref) {
-      printf("    iso ref: ");
-      for(i = 0; i < media->digest.size; i++) printf("%02x", media->digest.iso_ref[i]);
-      printf("\n");
+    if(media->full_blocks) {
+      printf(
+        "  full size: %u%s kB\n",
+        media->full_blocks >> 1,
+        (media->full_blocks & 1) ? ".5" : ""
+      );
     }
-    if(media->got_part_ref) {
-      printf("   part ref: ");
-      for(i = 0; i < media->digest.size; i++) printf("%02x", media->digest.part_ref[i]);
-      printf("\n");
+
+    if(digest_valid(media->digest.iso)) {
+      printf("    iso ref: %s\n", digest_hex(media->digest.iso));
+    }
+    if(digest_valid(media->digest.part)) {
+      printf("   part ref: %s\n", digest_hex(media->digest.part));
     }
   }
 
@@ -124,37 +129,31 @@ int main(int argc, char **argv)
 
   printf("     result: ");
   i = 0;
-  if(media->iso_size) {
-    show_result("iso", media->digest.name, media->got_iso_ref, media->iso_ok);
+  if(media->iso_blocks) {
+    printf("iso %s %s", digest_name(media->digest.iso), digest_ok(media->digest.iso) ? "ok" : "wrong");
     i = 1;
   }
   if(media->part_blocks) {
     if(i) printf(", ");
-    show_result("partition", media->digest.name, media->got_part_ref, media->part_ok);
+    printf("partition %s %s", digest_name(media->digest.part), digest_ok(media->digest.part) ? "ok" : "wrong");
   }
   printf("\n");
 
   if(opt.verbose) {
-    if(media->got_iso) {
-      printf(" iso %6s: ", media->digest.name);
-      for(i = 0; i < media->digest.size; i++) printf("%02x", media->digest.iso[i]);
-      printf("\n");
+    if(digest_valid(media->digest.iso)) {
+      printf(" iso %6s: %s\n", digest_name(media->digest.iso), digest_name(media->digest.iso));
     }
 
-    if(media->got_part) {
-      printf("part %6s: ", media->digest.name);
-      for(i = 0; i < media->digest.size; i++) printf("%02x", media->digest.part[i]);
-      printf("\n");
+    if(digest_valid(media->digest.part)) {
+      printf("part %6s: %s\n", digest_name(media->digest.part), digest_hex(media->digest.part));
     }
   }
 
-  if(media->got_full) {
-    printf("%11s: ", media->digest.name);
-    for(i = 0; i < media->digest.size; i++) printf("%02x", media->digest.full[i]);
-    printf("\n");
+  if(digest_valid(media->digest.full)) {
+    printf("%11s: %s\n", digest_name(media->digest.full), digest_hex(media->digest.full));
   }
 
-  i = media->iso_ok || media->part_ok ? 0 : 1;
+  i = digest_ok(media->digest.iso) || digest_ok(media->digest.part) ? 0 : 1;
 
   mediacheck_done(media);
 
@@ -180,16 +179,6 @@ void help()
     "Usually both a checksum over the whole ISO image and the installation\n"
     "partition are available. Both are checked.\n"
   );
-}
-
-
-/*
- * Helper function: show test result.
- */
-void show_result(char *name, char *digest_name, unsigned checked, unsigned ok)
-{
-  printf("%s %s ", name, digest_name);
-  printf(checked ? ok ? "ok" : "wrong" : "unchecked");
 }
 
 

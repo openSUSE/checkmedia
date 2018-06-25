@@ -24,12 +24,12 @@ LIB_NAME  = libmediacheck
 LIB_FILENAME = $(LIB_NAME).so.$(VERSION)
 LIB_SONAME   = $(LIB_NAME).so.$(MAJOR_VERSION)
 
-%.o: %.c
+%.o: %.c mediacheck.h
 	$(CC) -c $(CFLAGS) $(SHARED_FLAGS) -DVERSION=\"$(VERSION)\" -o $@ $<
 
 all: checkmedia
 
-checkmedia: checkmedia.c $(LIB_FILENAME)
+checkmedia: checkmedia.c $(LIB_FILENAME) mediacheck.h
 	echo $(LIB_FILENAME)
 	$(CC) $(CFLAGS) $(LDFLAGS) checkmedia.c -DVERSION=\"$(VERSION)\" -o $@
 
