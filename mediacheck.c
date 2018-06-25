@@ -139,7 +139,7 @@ API_SYM void mediacheck_calculate_digest(mediacheck_t *media)
   last_chunk_blocks = media->full_blocks % chunk_blocks;
 
   if(!media || !media->file_name) return;
-  
+
   if((fd = open(media->file_name, O_RDONLY | O_LARGEFILE)) == -1) return;
 
   update_progress(media, 0);
@@ -150,7 +150,7 @@ API_SYM void mediacheck_calculate_digest(mediacheck_t *media)
     unsigned u, size = chunk_size;
 
     if(chunk == last_chunk) size = last_chunk_blocks << 9;
-  
+
     if((u = read(fd, buffer, size)) != size) {
       media->err = 1;
       if(u > size) u = 0 ;
