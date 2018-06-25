@@ -44,17 +44,17 @@ int main(int argc, char **argv)
     }
   }
 
+  if(opt.version) {
+    printf(VERSION "\n");
+    return 0;
+  }
+
   if(argc == optind + 1) {
     opt.file_name = argv[optind];
   }
   else {
     help();
     return 1;
-  }
-
-  if(opt.version) {
-    printf(VERSION "\n");
-    return 0;
   }
 
   media = mediacheck_init(opt.file_name, progress);
@@ -176,8 +176,8 @@ void help()
     "  -v, --verbose         Show more detailed info.\n"
     "  -h, --help            Show this text.\n"
     "\n"
-    "Usually both a checksum over the whole ISO image and the installation\n"
-    "partition are available. Both are checked.\n"
+    "Usually checksums both over the whole ISO image and the installation\n"
+    "partition are available.\n"
   );
 }
 

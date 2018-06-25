@@ -3,9 +3,7 @@ CFLAGS       = -g -O2 -Wall
 LDFLAGS      = -L. -lmediacheck
 SHARED_FLAGS = -fPIC -fvisibility=hidden
 
-SRC_LIB     = $(wildcard mediacheck.c md5.c sha*.c)
-OBJ_LIB     = $(SRC_LIB:.c=.o)
-
+ARCH    := $(shell uname -m)
 GIT2LOG := $(shell if [ -x ./git2log ] ; then echo ./git2log --update ; else echo true ; fi)
 GITDEPS := $(shell [ -d .git ] && echo .git/HEAD .git/refs/heads .git/refs/tags)
 VERSION := $(shell $(GIT2LOG) --version VERSION ; cat VERSION)
@@ -14,29 +12,34 @@ PREFIX  := checkmedia-$(VERSION)
 
 MAJOR_VERSION := $(shell $(GIT2LOG) --version VERSION ; cut -d . -f 1 VERSION)
 
+LIB_NAME     = libmediacheck
+LIB_FILENAME = $(LIB_NAME).so.$(VERSION)
+LIB_SONAME   = $(LIB_NAME).so.$(MAJOR_VERSION)
+
+DIGEST_SRC  = $(wildcard md5.c sha*.c)
+DIGEST_OBJ  = $(DIGEST_SRC:.c=.o)
+
 ifneq ($(filter x86_64, $(ARCH)),)
 LIBDIR  = /usr/lib64
 else
 LIBDIR  = /usr/lib
 endif
-LIB_NAME  = libmediacheck
-
-LIB_FILENAME = $(LIB_NAME).so.$(VERSION)
-LIB_SONAME   = $(LIB_NAME).so.$(MAJOR_VERSION)
-
-%.o: %.c mediacheck.h
-	$(CC) -c $(CFLAGS) $(SHARED_FLAGS) -DVERSION=\"$(VERSION)\" -o $@ $<
 
 all: checkmedia
 
 checkmedia: checkmedia.c $(LIB_FILENAME) mediacheck.h
-	echo $(LIB_FILENAME)
 	$(CC) $(CFLAGS) $(LDFLAGS) checkmedia.c -DVERSION=\"$(VERSION)\" -o $@
 
-$(LIB_FILENAME): $(OBJ_LIB) mediacheck.h
-	$(CC) -shared -Wl,-soname,$(LIB_SONAME) $(OBJ_LIB) -o $(LIB_FILENAME)
+mediacheck.o: mediacheck.c mediacheck.h
+	$(CC) -c $(CFLAGS) $(SHARED_FLAGS) -DVERSION=\"$(VERSION)\" -o $@ $<
+
+$(DIGEST_OBJ): %.o: %.c %.h
+	$(CC) -c $(CFLAGS) $(SHARED_FLAGS) -o $@ $<
+
+$(LIB_FILENAME): $(DIGEST_OBJ) mediacheck.o
+	$(CC) -shared -Wl,-soname,$(LIB_SONAME) mediacheck.o $(DIGEST_OBJ) -o $(LIB_FILENAME)
 	@ln -snf $(LIB_FILENAME) $(LIB_SONAME)
-	@ln -snf $(LIB_FILENAME) $(LIB_NAME).so
+	@ln -snf $(LIB_SONAME) $(LIB_NAME).so
 
 changelog: $(GITDEPS)
 	$(GIT2LOG) --changelog changelog
@@ -47,7 +50,6 @@ install: checkmedia
 	ln -snf $(LIB_FILENAME) $(DESTDIR)$(LIBDIR)/$(LIB_SONAME)
 	ln -snf $(LIB_SONAME) $(DESTDIR)$(LIBDIR)/$(LIB_NAME).so
 	install -m 644 -D mediacheck.h $(DESTDIR)/usr/include/mediacheck.h
-
 
 archive: changelog
 	@if [ ! -d .git ] ; then echo no git repo ; false ; fi
