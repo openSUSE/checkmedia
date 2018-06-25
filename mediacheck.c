@@ -49,6 +49,10 @@ typedef struct digest_s {
   char hex_ref[MAX_DIGEST_SIZE*2 + 1];		/* expected hex digest */
 } digest_t;
 
+typedef struct {
+  unsigned start, blocks;
+} chunk_region_t;
+
 #include "mediacheck.h"
 
 static void digest_ctx_init(digest_t *digest);
@@ -58,6 +62,7 @@ static void get_info(mediacheck_t *media);
 static int sanitize_data(char *data, int length);
 static char *no_extra_spaces(char *str);
 static void update_progress(mediacheck_t *media, unsigned blocks);
+static void process_chunk(digest_t *digest, chunk_region_t *region, unsigned chunk, unsigned chunk_blocks, unsigned char *buffer);
 
 
 /*
@@ -119,56 +124,19 @@ API_SYM void mediacheck_done(mediacheck_t *media)
  */
 API_SYM void mediacheck_calculate_digest(mediacheck_t *media)
 {
-  unsigned char buffer[64 << 10];	/* at least 36k! */
+  unsigned char buffer[64 << 10];	/* arbitrary, but at least 36 kB! */
   unsigned chunk_size = sizeof buffer;
   unsigned chunk_blocks = chunk_size >> 9;
+  unsigned last_chunk, last_chunk_blocks;
+  unsigned chunk;
   int fd;
-  unsigned chunk, u;
 
-  struct chunk_s {
-    unsigned chunk;
-    unsigned ofs;
-    unsigned len;
-  } iso_first, iso_last, part_first, part_last, full_first, full_last;
+  chunk_region_t full_region = { 0, media->full_blocks } ;
+  chunk_region_t iso_region = { 0, media->iso_blocks - media->pad_blocks } ;
+  chunk_region_t part_region = { media->part_start, media->part_blocks } ;
 
-  iso_first.chunk = 0;
-  iso_first.ofs = 0;
-  iso_first.len = chunk_blocks;
-
-  iso_last.chunk = (media->iso_blocks - media->pad_blocks) / chunk_blocks;
-  iso_last.ofs = 0;
-  iso_last.len = (media->iso_blocks - media->pad_blocks) % chunk_blocks;
-
-  if(iso_last.chunk == iso_first.chunk) {
-    iso_first.len = iso_last.len;
-    iso_last.len = 0;
-  }
-
-  full_first.chunk = 0;
-  full_first.ofs = 0;
-  full_first.len = chunk_blocks;
-
-  full_last.chunk = media->full_blocks / chunk_blocks;
-  full_last.ofs = 0;
-  full_last.len = media->full_blocks % chunk_blocks;
-
-  if(full_last.chunk == full_first.chunk) {
-    full_first.len = full_last.len;
-    full_last.len = 0;
-  }
-
-  part_first.chunk = media->part_start / chunk_blocks;
-  part_first.ofs = media->part_start % chunk_blocks;
-  part_first.len = chunk_blocks - part_first.ofs;
-
-  part_last.chunk = (media->part_start + media->part_blocks) / chunk_blocks;
-  part_last.ofs = 0;
-  part_last.len = (media->part_start + media->part_blocks) % chunk_blocks;
-
-  if(part_last.chunk == part_first.chunk) {
-    part_first.len = part_last.len - part_first.ofs;
-    part_last.len = 0;
-  }
+  last_chunk = media->full_blocks / chunk_blocks;
+  last_chunk_blocks = media->full_blocks % chunk_blocks;
 
   if(!media || !media->file_name) return;
   
@@ -178,10 +146,10 @@ API_SYM void mediacheck_calculate_digest(mediacheck_t *media)
 
   mediacheck_digest_init(media->digest.full, media->digest.iso->name ?: media->digest.part->name, NULL);
 
-  for(chunk = 0; chunk <= full_last.chunk; chunk++) {
-    unsigned size = chunk_size;
+  for(chunk = 0; chunk <= last_chunk; chunk++) {
+    unsigned u, size = chunk_size;
 
-    if(chunk == full_last.chunk) size = full_last.len;
+    if(chunk == last_chunk) size = last_chunk_blocks << 9;
   
     if((u = read(fd, buffer, size)) != size) {
       media->err = 1;
@@ -190,51 +158,26 @@ API_SYM void mediacheck_calculate_digest(mediacheck_t *media)
       break;
     };
 
-    if(chunk >= full_first.chunk && chunk <= full_last.chunk) {
-      if(chunk == full_first.chunk) {
-        mediacheck_digest_process(media->digest.full, buffer + (full_first.ofs << 9), full_first.len << 9);
-      }
-      else if(chunk == full_last.chunk) {
-        mediacheck_digest_process(media->digest.full, buffer + (full_last.ofs << 9), full_last.len << 9);
-      }
-      else {
-        mediacheck_digest_process(media->digest.full, buffer, chunk_size);
-      }
-    }
+    /*
+     * The full digest should give the digest over the real file, without
+     * any adjustments. So do it before manipulating the buffer.
+     */
+    process_chunk(media->digest.full, &full_region, chunk, chunk_blocks, buffer);
 
     if(chunk == 0) {
       memset(buffer, 0, 0x200);
       memset(buffer + 0x8373, ' ', 0x200);
     }
 
-    if(chunk >= iso_first.chunk && chunk <= iso_last.chunk) {
-      if(chunk == iso_first.chunk) {
-        mediacheck_digest_process(media->digest.iso, buffer + (iso_first.ofs << 9), iso_first.len << 9);
-      }
-      else if(chunk == iso_last.chunk) {
-        mediacheck_digest_process(media->digest.iso, buffer + (iso_last.ofs << 9), iso_last.len << 9);
-      }
-      else {
-        mediacheck_digest_process(media->digest.iso, buffer, chunk_size);
-      }
-    }
-
-    if(chunk >= part_first.chunk && chunk <= part_last.chunk) {
-      if(chunk == part_first.chunk) {
-        mediacheck_digest_process(media->digest.part, buffer + (part_first.ofs << 9), part_first.len << 9);
-      }
-      else if(chunk == part_last.chunk) {
-        mediacheck_digest_process(media->digest.part, buffer + (part_last.ofs << 9), part_last.len << 9);
-      }
-      else {
-        mediacheck_digest_process(media->digest.part, buffer, chunk_size);
-      }
-    }
+    process_chunk(media->digest.iso, &iso_region, chunk, chunk_blocks, buffer);
+    process_chunk(media->digest.part, &part_region, chunk, chunk_blocks, buffer);
 
     update_progress(media, (chunk + 1) * chunk_blocks);
   }
 
   if(!media->err) {
+    unsigned u;
+
     memset(buffer, 0, 1 << 9);		/* 0.5 kB */
     for(u = 0; u < media->pad_blocks; u++) {
       mediacheck_digest_process(media->digest.iso, buffer, 1 << 9);
@@ -290,7 +233,7 @@ API_SYM int mediacheck_digest_init(digest_t *digest, char *digest_name, char *di
 
   if(digest_name) {
     for(i = 0; i < sizeof digests / sizeof *digests; i++) {
-      if(!strcmp(digests[i].name, digest_name)) {
+      if(!strcasecmp(digests[i].name, digest_name)) {
         digest_by_name = i;
         break;
       }
@@ -371,12 +314,18 @@ API_SYM void mediacheck_digest_process(digest_t *digest, unsigned char *buffer, 
 }
 
 
+/*
+ * Check if digest holds valid data.
+ */
 API_SYM int mediacheck_digest_valid(digest_t *digest)
 {
   return digest ? digest->valid : 0;
 }
 
 
+/*
+ * Check if digest matches expected value.
+ */
 API_SYM int mediacheck_digest_ok(digest_t *digest)
 {
   if(!digest) return 0;
@@ -387,12 +336,18 @@ API_SYM int mediacheck_digest_ok(digest_t *digest)
 }
 
 
+/*
+ * Return digest name.
+ */
 API_SYM char *mediacheck_digest_name(digest_t *digest)
 {
   return digest ? digest->name : "";
 }
 
 
+/*
+ * Return digest as hex string.
+ */
 API_SYM char *mediacheck_digest_hex(digest_t *digest)
 {
   if(!digest) return "";
@@ -403,12 +358,20 @@ API_SYM char *mediacheck_digest_hex(digest_t *digest)
 }
 
 
+/*
+ * Return expected digest as hex string.
+ */
 API_SYM char *mediacheck_digest_hex_ref(digest_t *digest)
 {
   return digest ? digest->hex_ref : "";
 }
 
 
+/*
+ * Free digest resources.
+ *
+ * (Does nothing currently.)
+ */
 API_SYM void mediacheck_digest_done(digest_t *digest)
 {
   return;
@@ -719,5 +682,47 @@ void update_progress(mediacheck_t *media, unsigned blocks)
     if(media->progress) {
       media->progress(percent);
     }
+  }
+}
+
+
+/*
+ * Process digest of a single chunk.
+ *
+ * digest: pointer to digest struct
+ * region: pointer to region (start and size of area) over which to calculate digest
+ * chunk: current chunk (counted 0-based)
+ * chunk_blocks: chunk size in blocks (0.5 kB)
+ * buffer: chunk_blocks sized buffer
+ *
+ * Start and end of the area may not be aligned with chunks. So we need
+ * some calculations.
+ */
+void process_chunk(digest_t *digest, chunk_region_t *region, unsigned chunk, unsigned chunk_blocks, unsigned char *buffer)
+{
+  unsigned first_chunk = region->start / chunk_blocks;
+  if(chunk < first_chunk) return;
+
+  unsigned last_chunk = (region->start + region->blocks) / chunk_blocks;
+  if(chunk > last_chunk) return;
+
+  unsigned first_ofs = region->start % chunk_blocks;
+  unsigned first_len = chunk_blocks - first_ofs;
+
+  unsigned last_ofs = 0;
+  unsigned last_len = (region->start + region->blocks) % chunk_blocks;
+
+  if(last_chunk == first_chunk) {
+    first_len = last_len - first_ofs;
+  }
+
+  if(chunk == first_chunk) {
+    mediacheck_digest_process(digest, buffer + (first_ofs << 9), first_len << 9);
+  }
+  else if(chunk == last_chunk) {
+    mediacheck_digest_process(digest, buffer + (last_ofs << 9), last_len << 9);
+  }
+  else {
+    mediacheck_digest_process(digest, buffer, chunk_blocks << 9);
   }
 }
