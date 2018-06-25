@@ -34,7 +34,7 @@ typedef union {
   struct sha512_ctx sha512;
 } digest_ctx_t;
 
-typedef struct digest_s {
+typedef struct mediacheck_digest_s {
   digest_type_t type;				/* digest type */
   char *name;					/* digest name */
   int size;					/* (binary) digest size, not bigger than MAX_DIGEST_SIZE */
@@ -47,7 +47,7 @@ typedef struct digest_s {
   char hex[MAX_DIGEST_SIZE*2 + 1];		/* hex digest */
   unsigned char ref[MAX_DIGEST_SIZE];		/* expected binary digest */
   char hex_ref[MAX_DIGEST_SIZE*2 + 1];		/* expected hex digest */
-} digest_t;
+} mediacheck_digest_t;
 
 typedef struct {
   unsigned start, blocks;
@@ -55,14 +55,14 @@ typedef struct {
 
 #include "mediacheck.h"
 
-static void digest_ctx_init(digest_t *digest);
-static void digest_finish(digest_t *digest);
-static void digest_data_to_hex(digest_t *digest);
+static void digest_ctx_init(mediacheck_digest_t *digest);
+static void digest_finish(mediacheck_digest_t *digest);
+static void digest_data_to_hex(mediacheck_digest_t *digest);
 static void get_info(mediacheck_t *media);
 static int sanitize_data(char *data, int length);
 static char *no_extra_spaces(char *str);
 static void update_progress(mediacheck_t *media, unsigned blocks);
-static void process_chunk(digest_t *digest, chunk_region_t *region, unsigned chunk, unsigned chunk_blocks, unsigned char *buffer);
+static void process_chunk(mediacheck_digest_t *digest, chunk_region_t *region, unsigned chunk, unsigned chunk_blocks, unsigned char *buffer);
 
 
 /*
@@ -208,7 +208,7 @@ API_SYM void mediacheck_calculate_digest(mediacheck_t *media)
  * If digest_name is NULL it is inferred from digest_value length.
  * If digest_value is NULL, no value is set.
  */
-API_SYM int mediacheck_digest_init(digest_t *digest, char *digest_name, char *digest_value)
+API_SYM int mediacheck_digest_init(mediacheck_digest_t *digest, char *digest_name, char *digest_value)
 {
   unsigned u;
   int i, digest_by_name = 0, digest_by_size = 0;
@@ -285,7 +285,7 @@ API_SYM int mediacheck_digest_init(digest_t *digest, char *digest_name, char *di
 /*
  * This function does the actual digest calculation.
  */
-API_SYM void mediacheck_digest_process(digest_t *digest, unsigned char *buffer, unsigned len)
+API_SYM void mediacheck_digest_process(mediacheck_digest_t *digest, unsigned char *buffer, unsigned len)
 {
   if(!digest->ctx_init) digest_ctx_init(digest);
 
@@ -317,7 +317,7 @@ API_SYM void mediacheck_digest_process(digest_t *digest, unsigned char *buffer, 
 /*
  * Check if digest holds valid data.
  */
-API_SYM int mediacheck_digest_valid(digest_t *digest)
+API_SYM int mediacheck_digest_valid(mediacheck_digest_t *digest)
 {
   return digest ? digest->valid : 0;
 }
@@ -326,7 +326,7 @@ API_SYM int mediacheck_digest_valid(digest_t *digest)
 /*
  * Check if digest matches expected value.
  */
-API_SYM int mediacheck_digest_ok(digest_t *digest)
+API_SYM int mediacheck_digest_ok(mediacheck_digest_t *digest)
 {
   if(!digest) return 0;
 
@@ -339,7 +339,7 @@ API_SYM int mediacheck_digest_ok(digest_t *digest)
 /*
  * Return digest name.
  */
-API_SYM char *mediacheck_digest_name(digest_t *digest)
+API_SYM char *mediacheck_digest_name(mediacheck_digest_t *digest)
 {
   return digest ? digest->name : "";
 }
@@ -348,7 +348,7 @@ API_SYM char *mediacheck_digest_name(digest_t *digest)
 /*
  * Return digest as hex string.
  */
-API_SYM char *mediacheck_digest_hex(digest_t *digest)
+API_SYM char *mediacheck_digest_hex(mediacheck_digest_t *digest)
 {
   if(!digest) return "";
 
@@ -361,7 +361,7 @@ API_SYM char *mediacheck_digest_hex(digest_t *digest)
 /*
  * Return expected digest as hex string.
  */
-API_SYM char *mediacheck_digest_hex_ref(digest_t *digest)
+API_SYM char *mediacheck_digest_hex_ref(mediacheck_digest_t *digest)
 {
   return digest ? digest->hex_ref : "";
 }
@@ -372,7 +372,7 @@ API_SYM char *mediacheck_digest_hex_ref(digest_t *digest)
  *
  * (Does nothing currently.)
  */
-API_SYM void mediacheck_digest_done(digest_t *digest)
+API_SYM void mediacheck_digest_done(mediacheck_digest_t *digest)
 {
   return;
 }
@@ -383,7 +383,7 @@ API_SYM void mediacheck_digest_done(digest_t *digest)
  *
  * It is implicitly called in digest_process() if needed.
  */
-void digest_ctx_init(digest_t *digest)
+void digest_ctx_init(mediacheck_digest_t *digest)
 {
   switch(digest->type) {
     case digest_md5:
@@ -419,7 +419,7 @@ void digest_ctx_init(digest_t *digest)
  *
  * If a reference value has been provided the digest is compared with it.
  */
-void digest_finish(digest_t *digest)
+void digest_finish(mediacheck_digest_t *digest)
 {
   if(!digest->ctx_init) digest_ctx_init(digest);
 
@@ -461,7 +461,7 @@ void digest_finish(digest_t *digest)
 /*
  * Convert digest binary data to hex string.
  */
-void digest_data_to_hex(digest_t *digest)
+void digest_data_to_hex(mediacheck_digest_t *digest)
 {
   int i;
 
@@ -698,7 +698,7 @@ void update_progress(mediacheck_t *media, unsigned blocks)
  * Start and end of the area may not be aligned with chunks. So we need
  * some calculations.
  */
-void process_chunk(digest_t *digest, chunk_region_t *region, unsigned chunk, unsigned chunk_blocks, unsigned char *buffer)
+void process_chunk(mediacheck_digest_t *digest, chunk_region_t *region, unsigned chunk, unsigned chunk_blocks, unsigned char *buffer)
 {
   unsigned first_chunk = region->start / chunk_blocks;
   if(chunk < first_chunk) return;

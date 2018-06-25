@@ -1,4 +1,4 @@
-typedef struct digest_s digest_t;
+typedef struct mediacheck_digest_s mediacheck_digest_t;
 
 typedef void (* mediacheck_progress_t)(unsigned percent);
 
@@ -13,9 +13,9 @@ typedef struct {
   unsigned part_blocks;				/* partition size, in 0.5 kB units */
 
   struct {
-    digest_t *full;				/* full image digest, calculated */
-    digest_t *iso;				/* iso digest, calculated */
-    digest_t *part;				/* partition digest, calculated */
+    mediacheck_digest_t *full;			/* full image digest, calculated */
+    mediacheck_digest_t *iso;			/* iso digest, calculated */
+    mediacheck_digest_t *part;			/* partition digest, calculated */
   } digest;
 
   struct {
@@ -35,11 +35,11 @@ mediacheck_t *mediacheck_init(char *file_name, mediacheck_progress_t progress);
 void mediacheck_done(mediacheck_t *media);
 void mediacheck_calculate_digest(mediacheck_t *media);
 
-int mediacheck_digest_init(digest_t *digest, char *digest_name, char *digest_value);
-void mediacheck_digest_done(digest_t *digest);
-void mediacheck_digest_process(digest_t *digest, unsigned char *buffer, unsigned len);
-int mediacheck_digest_valid(digest_t *digest);
-int mediacheck_digest_ok(digest_t *digest);
-char *mediacheck_digest_name(digest_t *digest);
-char *mediacheck_digest_hex(digest_t *digest);
-char *mediacheck_digest_hex_ref(digest_t *digest);
+int mediacheck_digest_init(mediacheck_digest_t *digest, char *digest_name, char *digest_value);
+void mediacheck_digest_done(mediacheck_digest_t *digest);
+void mediacheck_digest_process(mediacheck_digest_t *digest, unsigned char *buffer, unsigned len);
+int mediacheck_digest_valid(mediacheck_digest_t *digest);
+int mediacheck_digest_ok(mediacheck_digest_t *digest);
+char *mediacheck_digest_name(mediacheck_digest_t *digest);
+char *mediacheck_digest_hex(mediacheck_digest_t *digest);
+char *mediacheck_digest_hex_ref(mediacheck_digest_t *digest);
