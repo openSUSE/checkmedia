@@ -149,6 +149,8 @@ API_SYM void mediacheck_calculate_digest(mediacheck_t *media)
   for(chunk = 0; chunk <= last_chunk; chunk++) {
     unsigned u, size = chunk_size;
 
+    if(media->abort) break;
+
     if(chunk == last_chunk) size = last_chunk_blocks << 9;
 
     if((u = read(fd, buffer, size)) != size) {
@@ -175,7 +177,7 @@ API_SYM void mediacheck_calculate_digest(mediacheck_t *media)
     update_progress(media, (chunk + 1) * chunk_blocks);
   }
 
-  if(!media->err) {
+  if(!media->err && !media->abort) {
     unsigned u;
 
     memset(buffer, 0, 1 << 9);		/* 0.5 kB */
@@ -184,7 +186,7 @@ API_SYM void mediacheck_calculate_digest(mediacheck_t *media)
     }
   }
 
-  update_progress(media, media->full_blocks);
+  if(!media->abort) update_progress(media, media->full_blocks);
 
   if(media->err) {
     media->digest.iso->valid = 0;
@@ -490,7 +492,7 @@ void digest_data_to_hex(mediacheck_digest_t *digest)
  */
 void get_info(mediacheck_t *media)
 {
-  int fd, ok = 0, tag_count = 0;
+  int fd, ok = 0, tag_count = 0, is_iso = 0;
   unsigned char buf[8];
   char *key, *value, *next;
   struct stat sb;
@@ -506,6 +508,17 @@ void get_info(mediacheck_t *media)
   }
 
   /*
+   * Check for ISO9660 magic.
+   */
+  if(
+    lseek(fd, 0x8000, SEEK_SET) == 0x8000 &&
+    read(fd, buf, 8) == 8
+  ) {
+    // yes, 8 bytes
+    if(!memcmp(buf, "\001CD001\001", 8)) is_iso = 1;
+  }
+
+  /*
    * ISO size is stored as both little- and big-endian values.
    *
    * Read both and compare as consistency check.
@@ -517,9 +530,8 @@ void get_info(mediacheck_t *media)
     unsigned little = 4*(buf[0] + (buf[1] << 8) + (buf[2] << 16) + (buf[3] << 24));
     unsigned big = 4*(buf[7] + (buf[6] << 8) + (buf[5] << 16) + (buf[4] << 24));
 
-    if(little && little == big) {
+    if(is_iso && little && little == big) {
       media->iso_blocks = little;
-      ok++;
     }
   }
 
@@ -561,7 +573,7 @@ void get_info(mediacheck_t *media)
 
   close(fd);
 
-  if(ok != 3) return;
+  if(ok != 2) return;
 
   media->err = 0;
 
@@ -584,21 +596,22 @@ void get_info(mediacheck_t *media)
 
     if(
       !strcasecmp(key, "md5sum") ||
-      !strcasecmp(key, "iso md5sum") ||
       !strcasecmp(key, "sha1sum") ||
       !strcasecmp(key, "sha224sum") ||
       !strcasecmp(key, "sha256sum") ||
       !strcasecmp(key, "sha384sum") ||
       !strcasecmp(key, "sha512sum")
     ) {
-      mediacheck_digest_init(media->digest.iso, NULL, value);
+      if(media->iso_blocks) {
+        mediacheck_digest_init(media->digest.iso, NULL, value);
+      }
     }
     else if(!strcasecmp(key, "partition")) {
       if(value && isdigit(*value)) {
         unsigned start = strtoul(value, &value, 0);
         if(*value++ == ',') {
           unsigned blocks = strtoul(value, &value, 0);
-          if(*value++ == ',') {
+          if(*value++ == ',' && blocks) {
             media->part_start = start;
             media->part_blocks = blocks;
 
@@ -680,7 +693,7 @@ void update_progress(mediacheck_t *media, unsigned blocks)
   if(percent != media->last_percent) {
     media->last_percent = percent;
     if(media->progress) {
-      media->progress(percent);
+      media->abort = media->progress(percent);
     }
   }
 }

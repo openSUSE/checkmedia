@@ -4,7 +4,7 @@
 #include "mediacheck.h"
 
 void help(void);
-void progress(unsigned percent);
+int progress(unsigned percent);
 
 struct {
   unsigned verbose:1;
@@ -76,7 +76,7 @@ int main(int argc, char **argv)
     return 1;
   }
 
-  if(media->pad_blocks >= media->iso_blocks) {
+  if(media->iso_blocks && media->pad_blocks >= media->iso_blocks) {
     printf("padding (%u blocks) is bigger than image size\n", media->pad_blocks);
     return 1;
   }
@@ -88,8 +88,9 @@ int main(int argc, char **argv)
       media->iso_blocks >> 1,
       (media->iso_blocks & 1) ? ".5" : ""
     );
+
+    if(media->pad_blocks) printf("        pad: %u kB\n", media->pad_blocks >> 1);
   }
-  if(media->pad_blocks) printf("        pad: %u kB\n", media->pad_blocks >> 1);
 
   if(media->part_blocks) {
     printf(
@@ -185,9 +186,11 @@ void help()
 /*
  * Progress indicator.
  */
-void progress(unsigned percent)
+int progress(unsigned percent)
 {
   printf("\x08\x08\x08\x08%3d%%", percent);
   fflush(stdout);
+
+  return 0;
 }
 

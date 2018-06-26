@@ -1,6 +1,6 @@
 typedef struct mediacheck_digest_s mediacheck_digest_t;
 
-typedef void (* mediacheck_progress_t)(unsigned percent);
+typedef int (* mediacheck_progress_t)(unsigned percent);
 
 typedef struct {
   char *file_name;				/* file to check */
@@ -22,6 +22,7 @@ typedef struct {
     char *key, *value;
   } tags[16];					/* up to 16 key - value pairs */
 
+  unsigned abort:1;				/* check aborted */
   unsigned err:1;				/* read error */
   unsigned err_ofs;				/* read error pos (in 0.5 kB units) */
 
