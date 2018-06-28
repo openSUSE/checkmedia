@@ -1,0 +1,296 @@
+#! /usr/bin/perl
+
+use strict;
+
+use Getopt::Long;
+
+use Data::Dumper;
+$Data::Dumper::Sortkeys = 1;
+$Data::Dumper::Terse = 1;
+$Data::Dumper::Indent = 1;
+
+sub verify_test;
+sub run_test;
+sub create_image;
+
+my $testdir = "tests";
+
+my $opt_create_reference;
+
+GetOptions(
+  'create-reference' => \$opt_create_reference,
+);
+
+my $tests = [
+  {
+    name => "iso_and_partition_no_padding",
+    digest => "md5",
+    full_blocks => 1000,
+    iso_blocks => 1000,
+    pad_blocks => 0,
+    part_start => 100,
+    part_blocks => 900,
+  },
+
+  {
+    name => "iso_and_partition_with_padding",
+    digest => "sha1",
+    full_blocks => 1000,
+    iso_blocks => 900,
+    pad_blocks => 100,
+    part_start => 100,
+    part_blocks => 900,
+  },
+
+  {
+    name => "iso_and_partition_no_isomagic",
+    digest => "sha224",
+    full_blocks => 1000,
+    iso_blocks => 900,
+    pad_blocks => 100,
+    part_start => 100,
+    part_blocks => 900,
+    no_iso_magic => 1,
+  },
+
+  {
+    name => "iso_and_partition_no_isodigest",
+    digest => "sha256",
+    full_blocks => 1000,
+    iso_blocks => 900,
+    pad_blocks => 100,
+    part_start => 100,
+    part_blocks => 900,
+    tag_options => "--remove sha256sum",
+  },
+
+  {
+    name => "iso_and_partition_no_partitiondigest",
+    digest => "sha384",
+    full_blocks => 1000,
+    iso_blocks => 900,
+    pad_blocks => 100,
+    part_start => 100,
+    part_blocks => 900,
+    tag_options => "--remove partition",
+  },
+
+  {
+    name => "iso_and_partition_no_digest",
+    digest => "sha256",
+    full_blocks => 1000,
+    iso_blocks => 900,
+    pad_blocks => 100,
+    part_start => 100,
+    part_blocks => 900,
+    tag_options => "--remove partition --remove sha256sum",
+  },
+
+  {
+    name => "iso_and_partition_wrong_padding",
+    digest => "sha512",
+    full_blocks => 1000,
+    iso_blocks => 900,
+    pad_blocks => 100,
+    part_start => 100,
+    part_blocks => 900,
+    tag_options => "--add-tag pad=50",
+  },
+
+  {
+    name => "iso_and_no_partition",
+    digest => "sha224",
+    full_blocks => 1000,
+    iso_blocks => 900,
+    pad_blocks => 100,
+    part_start => 0,
+    part_blocks => 0,
+  },
+
+  {
+    name => "no_iso_and_partition",
+    digest => "sha384",
+    full_blocks => 1000,
+    iso_blocks => 0,
+    pad_blocks => 100,
+    part_start => 100,
+    part_blocks => 900,
+  },
+
+  {
+    name => "iso_and_partition_odd_sizes",
+    digest => "sha1",
+    full_blocks => 1001,
+    iso_blocks => 1000,
+    pad_blocks => 100,
+    part_start => 101,
+    part_blocks => 900,
+  },
+
+  {
+    name => "iso_and_partition_odd_partition_size",
+    digest => "md5",
+    full_blocks => 1002,
+    iso_blocks => 1000,
+    pad_blocks => 100,
+    part_start => 101,
+    part_blocks => 901,
+  },
+
+  {
+    name => "iso_and_partition_low_partition_start",
+    digest => "sha256",
+    full_blocks => 1000,
+    iso_blocks => 1000,
+    pad_blocks => 100,
+    part_start => 2,
+    part_blocks => 998,
+  },
+
+
+];
+
+
+# - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+$ENV{LD_LIBRARY_PATH} = ".";
+
+my $count = 0;
+my $failed = 0;
+
+for my $test (@$tests) {
+  $count++;
+  create_image $test;
+  run_test $test;
+  $failed += verify_test $test if !$opt_create_reference;
+}
+
+if($opt_create_reference) {
+  print "$count test results created\n";
+}
+else {
+  print "--\n$failed of $count tests failed\n";
+}
+
+exit $failed ? 1 : 0;
+
+
+# - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+sub verify_test
+{
+  my ($config) = @_;
+  my $err = 1;
+
+  my $base = "$testdir/$config->{name}";
+  my $digest = $config->{digest} || "sha256";
+
+  my ($tag, $check, $ref_tag, $ref_check);
+
+  if(open my $f, "$base.$digest.tag") { local $/; $tag = <$f>; close $f; }
+  if(open my $f, "$base.$digest.check") { local $/; $check = <$f>; close $f; }
+  if(open my $f, "$base.$digest.tag.ref") { local $/; $ref_tag = <$f>; close $f; }
+  if(open my $f, "$base.$digest.check.ref") { local $/; $ref_check = <$f>; close $f; }
+
+  $err = 0 if $tag eq $ref_tag && $check eq $ref_check;
+
+  printf "%s.%s: %s\n", $config->{name}, $digest, $err ? "failed" : "ok";
+
+  return $err;
+}
+
+
+# - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+sub run_test
+{
+  my ($config) = @_;
+
+  my $base = "$testdir/$config->{name}";
+  my $digest = $config->{digest} || "sha256";
+  my $ref = $opt_create_reference ? ".ref" : "";
+
+  my $pad;
+  if($config->{pad_blocks}) {
+    $pad = " --pad ${\($config->{pad_blocks} / 4)}"
+  }
+
+  system "./tagmedia --digest $digest $pad $config->{tag_options} $base.img >$base.$digest.tag$ref";
+  system "./checkmedia -v $base.img >$base.$digest.check$ref";
+}
+
+
+# - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+# Create test image according to config.
+#
+# create_image(config)
+#
+# config: has ref with config values
+#
+sub create_image
+{
+  my ($config) = @_;
+
+  my $part_end = $config->{part_start} + $config->{part_blocks};
+  if(
+    $part_end > $config->{iso_blocks} - $config->{pad_blocks} &&
+    $part_end < $config->{iso_blocks}
+  ) {
+    die "$config->{name}: partition end can't be inside padding area\n";
+  }
+
+  if(
+    $part_end > $config->{full_blocks} ||
+    $config->{iso_blocks} > $config->{full_blocks}
+  ) {
+    die "$config->{name}: image sizes inconsistent\n";
+  }
+
+  my $file = "$testdir/$config->{name}.img";
+
+  open my $f, ">", $file;
+  die "$file: $!\n" if !$f;
+
+  truncate $f, $config->{full_blocks} << 9;
+
+  if($config->{iso_blocks}) {
+    if(!$config->{no_iso_magic}) {
+      seek $f, 0x8000, 0;
+      syswrite $f, "\x01CD001\x01\x00";
+    }
+
+    seek $f, 0x8050, 0;
+    syswrite $f, pack("VN", $config->{iso_blocks} / 4, $config->{iso_blocks} / 4);
+
+    seek $f, (($config->{iso_blocks} - $config->{pad_blocks}) << 9) - 4, 0;
+    syswrite $f, "efgh";
+  }
+
+  if($config->{name}) {
+    seek $f, 0x823e, 0;
+    syswrite $f, pack("A128", substr($config->{name}, 0, 128));
+  }
+
+  if($config->{full_blocks} > $config->{iso_blocks}) {
+    seek $f, ($config->{iso_blocks} << 9), 0;
+    syswrite $f, "ijkl";
+    seek $f, ($config->{full_blocks} << 9) - 4, 0;
+    syswrite $f, "uvwx";
+  }
+
+  if($config->{part_start}) {
+    seek $f, 0x0, 0;
+    syswrite $f, "abcd";
+
+    seek $f, 0x1fe, 0;
+    syswrite $f, "\x55\xaa";
+
+    seek $f, 0x1be, 0;
+    syswrite $f, pack("V4", 0xffffff00, 0xffffff83, $config->{part_start}, $config->{part_blocks});
+
+    seek $f, ($config->{part_start} << 9), 0;
+    syswrite $f, "mnop";
+
+    seek $f, (($config->{part_start} + $config->{part_blocks})<< 9) - 4, 0;
+    syswrite $f, "qrst";
+  }
+
+  close $f;
+}

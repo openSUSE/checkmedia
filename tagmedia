@@ -86,14 +86,9 @@ $old_tags = read_tags $image_data unless $opt_clean;
 # clone tag list
 set_tag $current_tags, { key => $_->{key}, value =>  $_->{value} } for @$old_tags;
 
-for (@opt_remove_tag) {
-  $current_tags = remove_tag $current_tags, $_;
-}
-
 set_tag $current_tags, { key => "check", value => 1 } if $opt_check;
 
 get_padding $image_data, $current_tags;
-#set_tag $current_tags, { key => "isosize", value => ($image_data->{iso_blocks} + $image_data->{pad_blocks})/4 };
 
 prepare_buffer $image_data;
 
@@ -105,6 +100,14 @@ calculate_digest $image_data if $opt_digest;
 
 # finally close file handle (had been opened in read_image_blob())
 close $image_data->{fh};
+
+for (@opt_add_tag) {
+  set_tag $current_tags, parse_tag($_);
+}
+
+for (@opt_remove_tag) {
+  $current_tags = remove_tag $current_tags, $_;
+}
 
 write_tags $image_data, $current_tags if $image_data->{write};
 
@@ -186,9 +189,11 @@ sub get_image_type
   # Don't verify too much - most of the header might be gone. Checking for
   # plausible size info should be enough.
   #
+  my $iso_magic_ok = substr($image->{blob}, 0x8000, 8) eq "\x01CD001\x01\x00";
   my $little = 4 * unpack("V", substr($image->{blob}, 0x8050, 4));
   my $big = 4 * unpack("N", substr($image->{blob}, 0x8054, 4));
   if(
+    $iso_magic_ok &&
     $little &&
     $little == $big &&
     $little <= (-s $image->{name}) / 512

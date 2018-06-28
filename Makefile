@@ -25,13 +25,16 @@ else
 LIBDIR  = /usr/lib
 endif
 
-all: checkmedia
+all: checkmedia digestdemo
 
 checkmedia: checkmedia.c $(LIB_FILENAME) mediacheck.h
 	$(CC) $(CFLAGS) $(LDFLAGS) checkmedia.c -DVERSION=\"$(VERSION)\" -o $@
 
+digestdemo: digestdemo.c $(LIB_FILENAME) mediacheck.h
+	$(CC) $(CFLAGS) $(LDFLAGS) digestdemo.c -o $@
+
 mediacheck.o: mediacheck.c mediacheck.h
-	$(CC) -c $(CFLAGS) $(SHARED_FLAGS) -DVERSION=\"$(VERSION)\" -o $@ $<
+	$(CC) -c $(CFLAGS) $(SHARED_FLAGS) -o $@ $<
 
 $(DIGEST_OBJ): %.o: %.c %.h
 	$(CC) -c $(CFLAGS) $(SHARED_FLAGS) -o $@ $<
@@ -43,6 +46,9 @@ $(LIB_FILENAME): $(DIGEST_OBJ) mediacheck.o
 
 changelog: $(GITDEPS)
 	$(GIT2LOG) --changelog changelog
+
+test: checkmedia
+	./testmediacheck
 
 install: checkmedia
 	install -m 755 -D checkmedia tagmedia $(DESTDIR)/usr/bin
@@ -59,4 +65,4 @@ archive: changelog
 	xz -f package/$(PREFIX).tar
 
 clean:
-	rm -rf *.o *.so *.so.* package checkmedia *~
+	rm -rf *.o *.so *.so.* package checkmedia digestdemo *~ tests/*.{img,check,tag}

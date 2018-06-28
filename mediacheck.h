@@ -24,7 +24,7 @@ typedef struct {
 
   unsigned abort:1;				/* check aborted */
   unsigned err:1;				/* read error */
-  unsigned err_ofs;				/* read error pos (in 0.5 kB units) */
+  unsigned err_block;				/* read error position (in 0.5 kB units) */
 
   char app_id[0x81];				/* application id */
   char app_data[0x201];				/* app specific data*/
@@ -36,9 +36,10 @@ mediacheck_t *mediacheck_init(char *file_name, mediacheck_progress_t progress);
 void mediacheck_done(mediacheck_t *media);
 void mediacheck_calculate_digest(mediacheck_t *media);
 
-int mediacheck_digest_init(mediacheck_digest_t *digest, char *digest_name, char *digest_value);
+mediacheck_digest_t *mediacheck_digest_init(char *digest_name, char *digest_value);
 void mediacheck_digest_done(mediacheck_digest_t *digest);
 void mediacheck_digest_process(mediacheck_digest_t *digest, unsigned char *buffer, unsigned len);
+
 int mediacheck_digest_valid(mediacheck_digest_t *digest);
 int mediacheck_digest_ok(mediacheck_digest_t *digest);
 char *mediacheck_digest_name(mediacheck_digest_t *digest);

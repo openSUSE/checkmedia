@@ -80,10 +80,6 @@ API_SYM mediacheck_t * mediacheck_init(char *file_name, mediacheck_progress_t pr
   media->file_name = file_name;
   media->progress = progress;
 
-  media->digest.iso = calloc(1, sizeof *media->digest.iso);
-  media->digest.part = calloc(1, sizeof *media->digest.part);
-  media->digest.full = calloc(1, sizeof *media->digest.full);
-
   get_info(media);
 
   return media;
@@ -105,9 +101,9 @@ API_SYM void mediacheck_done(mediacheck_t *media)
     free(media->tags[i].value);
   }
 
-  free(media->digest.iso);
-  free(media->digest.part);
-  free(media->digest.full);
+  mediacheck_digest_done(media->digest.iso);
+  mediacheck_digest_done(media->digest.part);
+  mediacheck_digest_done(media->digest.full);
 
   free(media);
 }
@@ -144,19 +140,19 @@ API_SYM void mediacheck_calculate_digest(mediacheck_t *media)
 
   update_progress(media, 0);
 
-  mediacheck_digest_init(media->digest.full, media->digest.iso->name ?: media->digest.part->name, NULL);
+  media->digest.full = mediacheck_digest_init(
+    media->digest.iso ? media->digest.iso->name : media->digest.part ? media->digest.part->name : NULL, NULL
+  );
 
-  for(chunk = 0; chunk <= last_chunk; chunk++) {
+  for(chunk = 0; !media->abort && chunk <= last_chunk; chunk++) {
     unsigned u, size = chunk_size;
-
-    if(media->abort) break;
 
     if(chunk == last_chunk) size = last_chunk_blocks << 9;
 
     if((u = read(fd, buffer, size)) != size) {
       media->err = 1;
       if(u > size) u = 0 ;
-      media->err_ofs = (u >> 9) + chunk * chunk_blocks;
+      media->err_block = (u >> 9) + chunk * chunk_blocks;
       break;
     };
 
@@ -189,9 +185,9 @@ API_SYM void mediacheck_calculate_digest(mediacheck_t *media)
   if(!media->abort) update_progress(media, media->full_blocks);
 
   if(media->err) {
-    media->digest.iso->valid = 0;
-    media->digest.part->valid = 0;
-    media->digest.full->valid = 0;
+    if(media->digest.iso) media->digest.iso->valid = 0;
+    if(media->digest.part) media->digest.part->valid = 0;
+    if(media->digest.full) media->digest.full->valid = 0;
   }
 
   close(fd);
@@ -205,15 +201,16 @@ API_SYM void mediacheck_calculate_digest(mediacheck_t *media)
  * digest_name: digest name
  * digest_value: expected digest value as hex string
  *
- * return: 1 if valid, else 0
+ * return: new digest; NULL if invalid data have been passed to mediacheck_digest_init()
  *
  * If digest_name is NULL it is inferred from digest_value length.
  * If digest_value is NULL, no value is set.
  */
-API_SYM int mediacheck_digest_init(mediacheck_digest_t *digest, char *digest_name, char *digest_value)
+API_SYM mediacheck_digest_t *mediacheck_digest_init(char *digest_name, char *digest_value)
 {
   unsigned u;
   int i, digest_by_name = 0, digest_by_size = 0;
+  mediacheck_digest_t *digest;
 
   static struct {
     digest_type_t type;
@@ -229,9 +226,9 @@ API_SYM int mediacheck_digest_init(mediacheck_digest_t *digest, char *digest_nam
     { digest_sha512, "sha512", SHA512_DIGEST_SIZE },
   };
 
-  if(!digest) return 0;
+  digest = calloc(1, sizeof *digest);
 
-  memset(digest, 0, sizeof *digest);
+  digest->valid = 1;
 
   if(digest_name) {
     for(i = 0; i < sizeof digests / sizeof *digests; i++) {
@@ -254,10 +251,10 @@ API_SYM int mediacheck_digest_init(mediacheck_digest_t *digest, char *digest_nam
   }
 
   // invalid
-  if(!digest_by_name && !digest_by_size) return 0;
+  if(!digest_by_name && !digest_by_size) digest->valid = 0;
 
   // inconsistency
-  if(digest_by_name && digest_by_size && digest_by_name != digest_by_size) return 0;
+  if(digest_by_name && digest_by_size && digest_by_name != digest_by_size) digest->valid = 0;
 
   i = digest_by_name ?: digest_by_size;
 
@@ -271,16 +268,20 @@ API_SYM int mediacheck_digest_init(mediacheck_digest_t *digest, char *digest_nam
         digest->ref[i] = u;
       }
       else {
-        return 0;
+        digest->valid = 0;
+        break;
       }
     }
   }
 
-  digest->valid = 1;
-
   digest_data_to_hex(digest);
 
-  return 1;
+  if(!digest->valid) {
+    mediacheck_digest_done(digest);
+    digest = NULL;
+  }
+
+  return digest;
 }
 
 
@@ -289,6 +290,8 @@ API_SYM int mediacheck_digest_init(mediacheck_digest_t *digest, char *digest_nam
  */
 API_SYM void mediacheck_digest_process(mediacheck_digest_t *digest, unsigned char *buffer, unsigned len)
 {
+  if(!digest || digest->finished) return;
+
   if(!digest->ctx_init) digest_ctx_init(digest);
 
   switch(digest->type) {
@@ -371,11 +374,13 @@ API_SYM char *mediacheck_digest_hex_ref(mediacheck_digest_t *digest)
 
 /*
  * Free digest resources.
- *
- * (Does nothing currently.)
  */
 API_SYM void mediacheck_digest_done(mediacheck_digest_t *digest)
 {
+  if(!digest) return;
+
+  free(digest);
+
   return;
 }
 
@@ -492,7 +497,7 @@ void digest_data_to_hex(mediacheck_digest_t *digest)
  */
 void get_info(mediacheck_t *media)
 {
-  int fd, ok = 0, tag_count = 0, is_iso = 0;
+  int fd, ok = 0, tag_count = 0, iso_magic_ok = 0;
   unsigned char buf[8];
   char *key, *value, *next;
   struct stat sb;
@@ -515,7 +520,7 @@ void get_info(mediacheck_t *media)
     read(fd, buf, 8) == 8
   ) {
     // yes, 8 bytes
-    if(!memcmp(buf, "\001CD001\001", 8)) is_iso = 1;
+    if(!memcmp(buf, "\001CD001\001", 8)) iso_magic_ok = 1;
   }
 
   /*
@@ -530,7 +535,7 @@ void get_info(mediacheck_t *media)
     unsigned little = 4*(buf[0] + (buf[1] << 8) + (buf[2] << 16) + (buf[3] << 24));
     unsigned big = 4*(buf[7] + (buf[6] << 8) + (buf[5] << 16) + (buf[4] << 24));
 
-    if(is_iso && little && little == big) {
+    if(iso_magic_ok && little && little == big) {
       media->iso_blocks = little;
     }
   }
@@ -603,7 +608,7 @@ void get_info(mediacheck_t *media)
       !strcasecmp(key, "sha512sum")
     ) {
       if(media->iso_blocks) {
-        mediacheck_digest_init(media->digest.iso, NULL, value);
+        media->digest.iso = mediacheck_digest_init(NULL, value);
       }
     }
     else if(!strcasecmp(key, "partition")) {
@@ -615,7 +620,7 @@ void get_info(mediacheck_t *media)
             media->part_start = start;
             media->part_blocks = blocks;
 
-            mediacheck_digest_init(media->digest.part, NULL, value);
+            media->digest.part = mediacheck_digest_init(NULL, value);
           }
         }
       }
@@ -693,7 +698,7 @@ void update_progress(mediacheck_t *media, unsigned blocks)
   if(percent != media->last_percent) {
     media->last_percent = percent;
     if(media->progress) {
-      media->abort = media->progress(percent);
+      media->abort |= media->progress(percent);
     }
   }
 }

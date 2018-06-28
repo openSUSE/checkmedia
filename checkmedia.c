@@ -114,6 +114,7 @@ int main(int argc, char **argv)
     if(mediacheck_digest_valid(media->digest.iso)) {
       printf("    iso ref: %s\n", mediacheck_digest_hex_ref(media->digest.iso));
     }
+
     if(mediacheck_digest_valid(media->digest.part)) {
       printf("   part ref: %s\n", mediacheck_digest_hex_ref(media->digest.part));
     }
@@ -124,19 +125,27 @@ int main(int argc, char **argv)
   mediacheck_calculate_digest(media);
   printf("\n");
 
-  if(media->err && media->err_ofs) {
-    printf("        err: sector %u\n", media->err_ofs);
+  if(media->err && media->err_block) {
+    printf("        err: block %u\n", media->err_block);
   }
 
   printf("     result: ");
   i = 0;
-  if(media->iso_blocks) {
-    printf("iso %s %s", mediacheck_digest_name(media->digest.iso), mediacheck_digest_ok(media->digest.iso) ? "ok" : "wrong");
+  if(media->iso_blocks && mediacheck_digest_valid(media->digest.iso)) {
+    printf(
+      "iso %s %s",
+      mediacheck_digest_name(media->digest.iso),
+      mediacheck_digest_ok(media->digest.iso) ? "ok" : "wrong"
+    );
     i = 1;
   }
-  if(media->part_blocks) {
+  if(media->part_blocks && mediacheck_digest_valid(media->digest.part)) {
     if(i) printf(", ");
-    printf("partition %s %s", mediacheck_digest_name(media->digest.part), mediacheck_digest_ok(media->digest.part) ? "ok" : "wrong");
+    printf(
+      "partition %s %s",
+      mediacheck_digest_name(media->digest.part),
+      mediacheck_digest_ok(media->digest.part) ? "ok" : "wrong"
+    );
   }
   printf("\n");
 
