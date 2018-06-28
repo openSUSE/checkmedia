@@ -24,6 +24,27 @@ first 512 bytes of the iso image (isohybrid writes an MBR there).
 
 The actual verification process is done by a separate [libmediacheck](mediacheck.md) library.
 
+## Examples
+
+```sh
+tagmedia --digest sha256 --pad 150 foo.iso
+```
+
+Calulate sha256 digest and store in `foo.iso`. Assume 150 sectors (of 2 kB) padding in iso image.
+
+```sh
+checkmedia foo.iso
+```
+
+Verify `foo.iso`.
+
+```sh
+checkmedia --verbose foo.iso
+```
+
+Verify `foo.iso` and show more detailed information.
+
+
 ## Downloads
 
 Get the latest version from the [openSUSE Build Service](https://software.opensuse.org/package/checkmedia).
