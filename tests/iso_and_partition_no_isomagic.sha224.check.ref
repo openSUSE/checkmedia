@@ -1,0 +1,9 @@
+       tags: key = "partition", value = "100,900,537b8f7d6b86fc36e3c14b447884be48471738bc90eec924c724a915"
+        app: iso_and_partition_no_isomagic
+  partition: start 50 kB, size 450 kB
+  full size: 500 kB
+   part ref: 537b8f7d6b86fc36e3c14b447884be48471738bc90eec924c724a915
+   checking:       0% 12% 25% 38% 51% 64% 76% 89%100%
+     result: partition sha224 ok
+part sha224: 537b8f7d6b86fc36e3c14b447884be48471738bc90eec924c724a915
+     sha224: 9ebc68a1ef6fabcfff6f7986be9f6e68bb3a5a6cb7eb0e00b59264dd

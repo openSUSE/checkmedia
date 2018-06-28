@@ -1,0 +1,15 @@
+       tags: key = "pad", value = "25"
+       tags: key = "md5sum", value = "20852af4e13314bea792807d9ac9103d"
+       tags: key = "partition", value = "101,901,2c01b6e930492a698b8bee67a92cc936"
+        app: iso_and_partition_odd_partition_size
+   iso size: 500 kB
+        pad: 50 kB
+  partition: start 50.5 kB, size 450.5 kB
+  full size: 501 kB
+    iso ref: 20852af4e13314bea792807d9ac9103d
+   part ref: 2c01b6e930492a698b8bee67a92cc936
+   checking:       0% 12% 25% 38% 51% 63% 76% 89%100%
+     result: iso md5 ok, partition md5 ok
+ iso    md5: 20852af4e13314bea792807d9ac9103d
+part    md5: 2c01b6e930492a698b8bee67a92cc936
+        md5: 8199bfbac826cbfb935701023a3c1cb1

@@ -1,0 +1,2 @@
+       tags: key = "pad", value = "25"
+tests/iso_and_partition_no_digest.img: no digest found

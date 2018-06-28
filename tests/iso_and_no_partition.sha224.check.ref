@@ -1,0 +1,11 @@
+       tags: key = "pad", value = "25"
+       tags: key = "sha224sum", value = "e421b915f39bb7497b822b6c8afc73d3e38d09d0b1c5c6a6a6013d93"
+        app: iso_and_no_partition
+   iso size: 450 kB
+        pad: 50 kB
+  full size: 500 kB
+    iso ref: e421b915f39bb7497b822b6c8afc73d3e38d09d0b1c5c6a6a6013d93
+   checking:       0% 12% 25% 38% 51% 64% 76% 89%100%
+     result: iso sha224 ok
+ iso sha224: e421b915f39bb7497b822b6c8afc73d3e38d09d0b1c5c6a6a6013d93
+     sha224: 3d71020ccbeeb40f9cf42d481fede64ab6649a338f20c67275a874e7
