@@ -1,6 +1,10 @@
 # checkmedia
 
-## Adding digests to iso images
+## About
+
+`checkmedia` is a tool to verify SUSE installation media. For this, the
+digest (sha256) is stored within the media images and used to check against
+the caluclated digest.
 
 Supported digests are: md5, sha1, sha224, sha256, sha384, sha512.
 
@@ -8,35 +12,43 @@ There are 512 bytes reserved for application specific use in the iso header
 at offset 0x373 (cf. application_data in struct iso_primary_descriptor in
 /usr/include/linux/iso_fs.h). We're free to do anything with it.
 
-mkisofs fills it with spaces (512 x ' '), there's no mkisofs command line
-option to set the field to some other value.
-
-'tagmedia' calculates the digest and puts a line like '<DIGEST>sum=<HEX_DIGEST>'
+`tagmedia` calculates the digest and puts a line like `<DIGEST>sum=<HEX_DIGEST>`
 into the field.
 
-'checkmedia' calculates the digest but assumes to be spaces in the range
+`checkmedia` calculates the digest but assumes to be spaces in the range
 0x8373-0x8572 of the iso image (iso header starts at 0x8000) and compares
 the result against the stored digest.
 
-To avoid problems with isohybrid images, checkmedia also does not check the
+To avoid problems with isohybrid images, `checkmedia` also does not check the
 first 512 bytes of the iso image (isohybrid writes an MBR there).
 
-## Usage
+The actual verification process is done by a separate [libmediacheck](mediacheck.md) library.
 
-  - add checksum
-```
-tagmedia --sha256 foo.iso
+## Examples
+
+```sh
+tagmedia --digest sha256 --pad 150 foo.iso
 ```
 
-  - verify checksum
+Calulate sha256 digest and store in `foo.iso`. Assume 150 sectors (of 2 kB) padding in iso image.
 
-```
+```sh
 checkmedia foo.iso
 ```
+
+Verify `foo.iso`.
+
+```sh
+checkmedia --verbose foo.iso
+```
+
+Verify `foo.iso` and show more detailed information.
+
 
 ## Downloads
 
 Get the latest version from the [openSUSE Build Service](https://software.opensuse.org/package/checkmedia).
+
 
 ## openSUSE Development
 
