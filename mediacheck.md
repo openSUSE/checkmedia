@@ -20,6 +20,8 @@ Have a look at [checkmedia.c](checkmedia.c) for a simple usage example.
 
 ```
 mediacheck_t *mediacheck_init(char *file_name, mediacheck_progress_t progress);
+
+typedef int (* mediacheck_progress_t)(unsigned percent);
 ```
 
 - `file_name` is the name of the image file (or device) to check.
@@ -29,7 +31,9 @@ indicate the verification progress. The function will be typically called
 once for each additional percent progressed. The first call is guaranteed to
 be for 0 %, the last for 100 %.
 
-The function will always return a non-NULL pointer. `(mediacheck_t).err` will
+`progress` may return 0 or 1. 1 indicates that the check should be aborted.
+
+`mediacheck_init` always returns a non-NULL pointer. `(mediacheck_t).err` will
 be set if there has been a problem.
 
 Look at [mediacheck.h](mediacheck.h) for the `mediacheck_t` definition.
