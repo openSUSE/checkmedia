@@ -52,7 +52,7 @@ Free resources associated with `media`.
 void mediacheck_calculate_digest(mediacheck_t *media);
 ```
 
-During the check the `pregress` function that has been passed to
+During the check the `progress` function that has been passed to
 `mediacheck_init` is called at regular intervals.
 
 Look at `media->err` and other elements in `media` for the result (see [checkmedia.c](checkmedia.c)).
@@ -111,7 +111,7 @@ int mediacheck_digest_valid(mediacheck_digest_t *digest);
 
 Return 1 if valid, 0 if not.
 
-### Check if calculated digest matched the expected value
+### Check if calculated digest matches the expected value
 
 ```
 int mediacheck_digest_ok(mediacheck_digest_t *digest);
