@@ -1,25 +1,85 @@
 #! /usr/bin/perl
 
-# Add/remove key=value pairs from iso application area (0x200 bytes at
-# 0x8373). Entries are separated by semicolons ';'.
+# Add/remove key=value pairs from iso application area (0x200 bytes starting
+# at 0x8373). Entries are separated by semicolons (';').
 #
-# digest is calculated assuming all zeros in 0x0000-0x01ff (MBR) and all
+# Digest is calculated assuming all zeros in 0x0000-0x01ff (MBR) and all
 # spaces in 0x8373-0x8572.
 
+use strict;
 
 use Getopt::Long;
 use Digest::MD5;
 use Digest::SHA;
 
-sub help;
+use Data::Dumper;
+$Data::Dumper::Sortkeys = 1;
+$Data::Dumper::Terse = 1;
+$Data::Dumper::Indent = 1;
 
-$opt_digest = undef;
-$opt_check = 0;
-$opt_pad = undef;
-$opt_show = 1;
-$opt_clean = 0;
-@opt_add_tag;
-@opt_remove_tag;
+# Here are some ISO9660 file system related constants.
+#
+# If in doubt about the ISO9660 layout, check http://alumnus.caltech.edu/~pje/iso9660.html
+#
+use constant {
+  # offset of volume descriptor
+  # usually points to "\x01CD001\x01\x00"
+  ISO9660_MAGIC_START => 0x8000,
+
+  # offset of volume size (in 2 kB units)
+  # stored as 32 bit little-endian, followed by a 32 bit big-endian value
+  ISO9660_VOLUME_SIZE => 0x8050,
+
+  # application identifier length
+  ISO9660_APP_ID_LENGTH => 0x80,
+
+  # offset of application specific data (anything goes)
+  ISO9660_APP_DATA_START => 0x8373,
+
+  # application specific data length
+  ISO9660_APP_DATA_LENGTH => 0x200,
+};
+
+# Here are some MBR (partition table) related constants.
+#
+# If in doubt about the MBR layout, check https://wiki.osdev.org/Partition_Table
+#
+use constant {
+  # MBR start
+  MBR_OFFSET => 0,
+
+  # offset of MBR magic
+  # points to "\x55\xaa"
+  MBR_MAGIC_START => 0x1fe,
+
+  # offset of partition table in MBR
+  MBR_PARTITION_TABLE => 0x1be,
+
+  # MBR size (in bytes)
+  MBR_LENGTH => 0x200,
+};
+
+sub usage;
+sub read_image_blob;
+sub get_image_type;
+sub get_padding;
+sub read_tags;
+sub write_tags;
+sub parse_tag;
+sub get_tag;
+sub set_tag;
+sub remove_tag;
+sub prepare_buffer;
+sub add_to_digest;
+sub calculate_digest;
+
+my $opt_digest = undef;
+my $opt_check = 0;
+my $opt_pad = undef;
+my $opt_show = 1;
+my $opt_clean = 0;
+my @opt_add_tag;
+my @opt_remove_tag;
 
 GetOptions(
   'show'             => \$opt_show,
@@ -30,127 +90,490 @@ GetOptions(
   'add-tag=s'        => \@opt_add_tag,
   'remove-tag=s'     => \@opt_remove_tag,
   'clean'            => \$opt_clean,
+  'help'             => sub { usage 0 },
 );
 
+my $image_data;			# hash ref with image related data
+my $current_tags = [];		# current list of tags
+my $old_tags = [];		# original list of tags
+my $digest_iso;			# digest calculated over iso image
+my $digest_part;		# digest calculated over partition
+
+# Note: all '*_block' variables use 0.5 kB units.
+
+
+# - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+$image_data->{name} = shift;
+if($image_data->{name} eq '') {
+  print STDERR "tagmedia: no image specified\n";
+  usage 1;
+}
+
+$image_data->{write} = $opt_digest || defined $opt_pad || $opt_check || @opt_add_tag || @opt_remove_tag || $opt_clean;
+
 if($opt_digest =~ /^md5(sum)?$/i) {
-  $digest = Digest::MD5->new;
+  $digest_iso = Digest::MD5->new;
+  $digest_part = Digest::MD5->new;
 }
 elsif($opt_digest =~ /^sha(1|224|256|384|512)(sum)?$/i) {
-  $digest = Digest::SHA->new($1);
+  $digest_iso = Digest::SHA->new($1);
+  $digest_part = Digest::SHA->new($1);
 }
 elsif($opt_digest) {
   die "$opt_digest: unsupported digest\n";
 }
 
-$write_iso = $opt_digest || defined($opt_pad) || $opt_check || @opt_add_tag || @opt_remove_tag || $opt_clean;
+read_image_blob $image_data;
+get_image_type $image_data;
 
-$iso = shift;
+$old_tags = read_tags $image_data unless $opt_clean;
 
-help if $iso eq '';
+# clone tag list
+set_tag $current_tags, { key => $_->{key}, value =>  $_->{value} } for @$old_tags;
 
-$buf_size = 1 << 20;
+set_tag $current_tags, { key => "check", value => 1 } if $opt_check;
 
-die "$iso: $!\n" unless open F, $iso;
-die "$iso: $!\n" unless sysread F, $buf0, $buf_size;
-$l = length($buf0);
-$buf_size = $l if $l < $buf_size;
-die "$iso: file too short\n" if ($l < 0x9000) || ($l & 0x3ff);
+get_padding $image_data, $current_tags;
 
-die "$iso: no iso9660 fs\n" if substr($buf0, 0x8000, 7) ne "\x01CD001\x01";
-$iso_size = 2 * unpack("V", substr($buf0, 0x8050, 4));	# in kB
+prepare_buffer $image_data;
 
-$tag = substr($buf0, 0x8373, 0x200);
-
-substr($buf0, 0x0000, 0x200) = "\x00" x 0x200;
-substr($buf0, 0x8373, 0x200) = " " x 0x200;
-
-if($opt_check) {
-  unshift @opt_add_tag, "check=1";
-}
-
-$pad_size = $opt_pad << 1;
-
-if(defined($opt_pad)) {
-  if($opt_pad) {
-    unshift @opt_add_tag, "pad=$opt_pad";
-    if($pad_size >= $iso_size) {
-      die "$opt_pad: padding too big!\n";
-    }
-    $iso_size -= $pad_size;
-  }
-  else {
-    unshift @opt_remove_tag, "pad"
-  }
-}
+# print Dumper $image_data;
+# print Dumper $current_tags;
 
 # calculate digest
-if($opt_digest) {
-  $digest->add($buf0);
+calculate_digest $image_data if $opt_digest;
 
-  while(($iso_size -= $l >> 10) > 0) {
-    $l = $iso_size > $buf_size >> 10 ? $buf_size : $iso_size << 10;
-    $l = sysread F, $buf0, $l;
-    $digest->add($buf0);
-  }
+# finally close file handle (had been opened in read_image_blob())
+close $image_data->{fh};
 
-  $buf0 = "\x00" x 0x400;
-  while($pad_size > 0) {
-    $digest->add($buf0);
-    $pad_size--;
-  }
-
-  $digest = $digest->hexdigest;
-
-  unshift @opt_add_tag, "${opt_digest}sum=$digest";
-}
-
-close F;
-
-# replace existing tags
 for (@opt_add_tag) {
-  $new_tag{$1} = 1 if /^(\S+?)\s*=/;
+  set_tag $current_tags, parse_tag($_);
 }
 
-# use old tags unless 'clean' option was given
-if(!$opt_clean) {
-  for (split /;/, $tag) {
-    s/^\s*|\s*$//g;
-    push @old_tags, "$_" unless $_ eq "" || (/^(\S+?)\s*=/ && $new_tag{$1});
+for (@opt_remove_tag) {
+  $current_tags = remove_tag $current_tags, $_;
+}
+
+write_tags $image_data, $current_tags if $image_data->{write};
+
+# print tags for user's pleasure
+for (@{$image_data->{write} ? $current_tags : $old_tags}) {
+  print "$_->{key}";
+  print " = $_->{value}" if defined $_->{value};
+  print "\n";
+}
+
+
+# - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+# usage(exit_code)
+#
+# Print help message and exit program with exit_code.
+#
+sub usage
+{
+  (my $msg = <<"  = = = = = = = =") =~ s/^ {4}//mg;
+    Usage: tagmedia [OPTIONS] IMAGE
+    Add/remove tags to SUSE installation media.
+
+    IMAGE is an SUSE installation medium; either DVD image or disk image.
+
+    Options:
+
+      --show                    Show currently set tags (default if no option is given).
+      --digest DIGEST           Add digest DIGEST (md5, sha1, sha224, sha256, sha384, sha512).
+      --pad N                   Ignore N 2 kB blocks of padding (at image end).
+      --check                   Tell installer to run media check at startup.
+      --add-tag foo=bar         Add tag foo with value bar.
+      --remove-tag foo          Remove tag foo.
+      --clean                   Remove all tags.
+      --help                    Write this help text.
+
+  = = = = = = = =
+
+  print $msg;
+
+  exit shift;
+}
+
+
+# - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+# read_image_blob(image)
+#
+# Read first 36 kB.
+# Note: leaves $image_data ->{fh} open for calculate_digest() to continue reading.
+#
+# image: hash with image related data
+#
+sub read_image_blob
+{
+  my ($image) = @_;
+
+  my $blob_size = 0x9000;
+  $image->{blob_blocks} = $blob_size >> 9;		# in 0.5 kB units
+
+  die "$image->{name}: $!\n" unless open $image->{fh}, $image->{name};
+  die "$image->{name}: $!\n" unless sysread $image->{fh}, $image->{blob}, $blob_size;
+  die "$image->{name}: file too short\n" if $blob_size != length $image->{blob};
+}
+
+
+# - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+# get_image_type(image)
+#
+# Analyze image type and get some basic data.
+#
+# image: hash with image related data
+# image->{blob}: buffer containing a sufficiently large portion of the image (36 kB)
+#
+sub get_image_type
+{
+  my ($image) = @_;
+
+  # Get iso size from ISO9660 header.
+  #
+  # Don't verify too much - most of the header might be gone. Since in
+  # ISO9660 sizes are stored both-endian we can do a plausibility check
+  # which should be enough.
+  #
+  my $iso_magic_ok = substr($image->{blob}, ISO9660_MAGIC_START, 8) eq "\x01CD001\x01\x00";
+  my $little = 4 * unpack("V", substr($image->{blob}, ISO9660_VOLUME_SIZE, 4));
+  my $big = 4 * unpack("N", substr($image->{blob}, ISO9660_VOLUME_SIZE + 4, 4));
+  if(
+    $iso_magic_ok &&
+    $little &&
+    $little == $big &&
+    $little <= (-s $image->{name}) / 512
+  ) {
+    $image->{iso_blocks} = $little;
+  }
+
+  # Scan mbr for last primary partition.
+  #
+  # Set $image->{part_start}, $image->{part_blocks} (in 0.5 kB units).
+  #
+  if(substr($image->{blob}, MBR_MAGIC_START, 2) eq "\x55\xaa") {
+    for (my $idx = 0; $idx < 4; $idx++) {
+      my ($boot, $type, $start, $size) = unpack(
+        "Cx3Cx3VV",
+        substr($image->{blob}, MBR_PARTITION_TABLE + 0x10 * $idx, 0x10)
+      );
+      if(
+        $type &&
+        !($boot & 0x7f) &&
+        $size &&
+        $start + $size > $image->{part_start} + $image->{part_blocks}
+      ) {
+        $image->{part_start} = $start;
+        $image->{part_blocks} = $size;
+      }
+    }
+  }
+
+  die "$image->{name}: unsupported image format\n" unless $image->{iso_blocks} || $image->{part_blocks};
+}
+
+
+# - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+# get_padding(image, tags)
+#
+# Get padding value to use.
+#
+# image: hash with image related data
+# tags: array ref with tag hashes
+#
+# Note: this uses the value passed via '--pad' option and stores it as
+# 'pad' tag.
+#
+sub get_padding
+{
+  my ($image, $tags) = @_;
+  my $padding_set;
+
+  if($image->{iso_blocks}) {
+    set_tag $tags, { key => "pad", value => $opt_pad } if $opt_pad;
+    my $pad_tag = get_tag $tags, "pad";
+
+    $image->{pad_blocks} = $pad_tag->{value} << 2 if $pad_tag;
+    $image->{iso_blocks} -= $image->{pad_blocks};
+
+    die "padding too large\n" if $image->{iso_blocks} <= 0;
+  }
+  else {
+    remove_tag $tags, "pad";
   }
 }
 
-# remove tags
-$rtags{$_} = 1 for @opt_remove_tag;
-for (@old_tags, @opt_add_tag) {
-  push @tags, $_ unless $_ eq "" || (/^(\S+?)\s*=/ && $rtags{$1}) ;
-}
 
-$new_tag = join ';', @tags;
-die "too many tags: \"$new_tag\"\n" if length($new_tag) > 0x200;
-$new_tag .= " " x (0x200 - length($new_tag));
-
-if($write_iso) {
-  die "$iso: $!\n" unless open F, "+<$iso";
-  die "$iso: $!\n" unless seek F, 0x8373, 0;
-  die "$iso: $!\n" unless $l = syswrite F, $new_tag, 0x200;
-  die "$iso: file too short\n" unless $l = 0x200;
-  close F;
-}
-
-print "$_\n" for $write_iso ? @tags : @old_tags;
-
-sub help
+# - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+# tags = read_tags(image)
+#
+# Read existing tags from image fragment.
+#
+# image: hash with image related data
+# image->{blob}: buffer containing a sufficiently large portion of the image (36 kB)
+# tags: array ref with tags
+# tags are hashes with key/value pairs - value is undef if there's no '='
+#
+sub read_tags
 {
-  die
-    "usage: tagmedia [options] iso\n" .
-    "Add/remove tags to SUSE installation media.\n" .
-    "Options:\n" .
-    "  --show\t\tlist tags\n" .
-    "  --digest DIGEST\tadd DIGEST (md5, sha1, sha224, sha256, sha384, sha512)\n" .
-    "  --pad N\t\tignore N 2k-sectors of padding\n" .
-    "  --check\t\tforce yast check\n" .
-    "  --add-tag foo=bar\tadd foo with value bar\n" .
-    "  --remove-tag foo\tremove foo\n" .
-    "  --clean\t\tremove all tags\n";
+  my ($image) = @_;
+
+  my $buf = substr($image->{blob}, ISO9660_APP_DATA_START, ISO9660_APP_DATA_LENGTH);
+  die "$image->{name}: unsupported image format\n" unless $buf  =~ /^[0-9A-Za-z_=,;! \x00]{512}$/;
+  $buf =~ s/[\s\x00]*$//;
+
+  my $tags = [];
+
+  for my $line (split /;/, $buf) {
+    set_tag $tags, parse_tag($line);
+  }
+
+  return $tags;
 }
 
+
+# - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+# write_tags(image, $tags)
+#
+# Insert tags into image fragment.
+# Note: this does not write anything to disk!
+#
+# image: hash with image related data
+# image->{blob}: buffer containing a sufficiently large portion of the image (36 kB)
+# tags: array ref with tags
+#
+sub write_tags
+{
+  my ($image, $tags) = @_;
+  my $buf;
+
+  for my $tag (@$tags) {
+    $buf .= ";" if defined $buf;
+    $buf .= $tag->{key};
+    $buf .= "=$tag->{value}" if defined $tag->{value};
+  }
+
+  die "tags too large: \"$buf\"\n" if length($buf) > ISO9660_APP_DATA_LENGTH;
+  $buf .= " " x (ISO9660_APP_DATA_LENGTH - length($buf));
+
+  my $len;
+  die "$image->{name}: $!\n" unless open $image->{fh}, "+<", $image->{name};
+  die "$image->{name}: $!\n" unless seek $image->{fh}, ISO9660_APP_DATA_START, 0;
+  die "$image->{name}: $!\n" unless $len = syswrite $image->{fh}, $buf, ISO9660_APP_DATA_LENGTH;
+  die "$image->{name}: failed to update image\n" unless $len == ISO9660_APP_DATA_LENGTH;
+
+  close $image->{fh};
+}
+
+
+# - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+# tag = parse_tag(string)
+#
+# Parse line ('key=value' format) and return hash ref with key/value elements.
+# value is undef if there's no '='.
+#
+sub parse_tag
+{
+  my ($line) = @_;
+
+  $line =~ s/^\s*|\s*$//g;
+
+  if($line =~ /^([A-Z_\d\s]+?)\s*=\s*+(.*)$/i) {
+    return { key => $1, value => $2 };
+  }
+  else {
+    return { key => $line };
+  }
+}
+
+
+# - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+# tag = get_tag(tags, key)
+#
+# Get tag from tag array with specified key.
+# Returns undef if no tag with such a key exists.
+#
+# tags: array ref with tag hashes
+# key: string
+# tag: tag hash ref ('key', 'value' pair)
+#
+sub get_tag
+{
+  my ($tags, $key) = @_;
+
+  for my $tag (@$tags) {
+    return $tag if $tag->{key} eq $key;
+  }
+
+  return undef;
+}
+
+
+# - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+# set_tag(tags, tag)
+#
+# Set tag in tags array.
+#
+# tags: array ref with tag hashes
+# tag: tag hash ref ('key', 'value' pair)
+#
+sub set_tag
+{
+  my ($tags, $tag) = @_;
+
+  my $old_tag = get_tag $tags, $tag->{key};
+  if($old_tag) {
+    $old_tag->{value} = $tag->{value};
+  }
+  else {
+    push @$tags, $tag;
+  }
+}
+
+
+# - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+# tags = remove_tag(tags, key)
+#
+# Remove tag from tag array with specified key.
+# Returns new tag array.
+#
+# tags: array ref with tag hashes
+# key: string
+#
+sub remove_tag
+{
+  my ($tags, $key) = @_;
+
+  return [ grep { $_->{key} ne $key } @$tags ];
+}
+
+
+# - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+# prepare_buffer(image)
+#
+# Reset some areas in image blob to defined values before starting digest calculation.
+#
+# image: hash with image related data
+# image->{blob}: buffer containing a sufficiently large portion of the image (36 kB)
+#
+sub prepare_buffer
+{
+  my $image = $_[0];
+
+  substr($image->{blob}, MBR_OFFSET, MBR_LENGTH) = "\x00" x MBR_LENGTH;
+  substr($image->{blob}, ISO9660_APP_DATA_START, ISO9660_APP_DATA_LENGTH) = " " x ISO9660_APP_DATA_LENGTH;
+}
+
+
+# - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+# add_to_digest(image, blocks, to_iso, to_part)
+#
+# Update digest reading blocks from $image->{fh}.
+#
+# blocks: number of blocks to read
+# to_iso: update $digest_iso
+# to_part: update $digest_part
+#
+# Note: a block is 0.5 kB.
+#
+sub add_to_digest
+{
+  my ($image, $blocks, $to_iso, $to_part) = @_;
+
+  my $buf;
+
+  while($blocks > 0) {
+    # try to read up to 1 MB at a time
+    my $len = $blocks > (1 << 11) ? 1 << 11 : $blocks;
+    my $read_len = sysread $image->{fh}, $buf, $len << 9;
+    die "$image->{name}: read error\n" if $read_len != $len << 9;
+    $digest_iso->add($buf) if $to_iso && $image->{iso_blocks};
+    $digest_part->add($buf) if $to_part && $image->{part_blocks};
+    $blocks -= $len;
+  }
+}
+
+
+# - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+# calculate_digest($image)
+#
+# Calculate digest.
+#
+# Note: $image_data->{fh} has been opened in read_image_blob(). We just continue
+# reading here.
+#
+# This function calculates 2 different digests:
+#
+#   (1) $image->{iso_blocks} starting from 0, plus $image->{pad_blocks} of zeros
+#   (2) $image->{part_blocks} starting from $image->{part_start}
+#
+# $image->{blob_blocks} have already been read and are cached in $image->{blob}.
+#
+# Both regions partly overlap and region 2 can overlap $image->{blob}.
+#
+# This function makes some effort to read the file in only one go.
+#
+# Note: padding has been subtracted from $image->{iso_blocks}.
+#
+sub calculate_digest
+{
+  my ($image) = @_;
+
+  $digest_iso->add($image->{blob}) if $image->{iso_blocks};
+
+  my $next_stop = $image->{iso_blocks};
+  my $idx = $image->{blob_blocks};
+
+  my $iso_rem;
+  my $part_rem;
+
+  if($image->{part_start}) {
+    if($image->{part_start} < $image->{blob_blocks}) {
+      $digest_part->add(
+        substr($image->{blob}, $image->{part_start} << 9, ($image->{blob_blocks} - $image->{part_start}) << 9)
+      );
+      $idx = $image->{blob_blocks};
+    }
+    else {
+      add_to_digest $image, $image->{part_start} - $image->{blob_blocks}, 1, 0;
+      $idx = $image->{part_start};
+    }
+
+    $next_stop = $image->{part_start} + $image->{part_blocks};
+    $next_stop = $image->{iso_blocks} if $image->{iso_blocks} && $image->{iso_blocks} < $next_stop;
+
+    $part_rem = $image->{part_start} + $image->{part_blocks} - $next_stop;
+  }
+
+  add_to_digest $image, $next_stop - $idx, 1, 1;
+
+  $iso_rem = $image->{iso_blocks} - $next_stop if $image->{iso_blocks};
+
+  if($part_rem) {
+    die "oops, assumption failed\n" if $iso_rem;
+    add_to_digest $image, $part_rem, 0, 1;
+  }
+  elsif($iso_rem) {
+    add_to_digest $image, $iso_rem, 1, 0;
+  }
+
+  if($image->{iso_blocks}) {
+    my $buf = "\x00" x 0x200;
+    my $pad_blocks = $image->{pad_blocks};
+
+    while($pad_blocks-- > 0) {
+      $digest_iso->add($buf);
+    }
+
+    $digest_iso = $digest_iso->hexdigest;
+    set_tag $current_tags, { key => "${opt_digest}sum", value => $digest_iso };
+  }
+
+  if($image->{part_blocks}) {
+    $digest_part = $digest_part->hexdigest;
+    set_tag $current_tags, {
+      key => "partition",
+      value => "$image->{part_start},$image->{part_blocks},$digest_part"
+    }
+  }
+}

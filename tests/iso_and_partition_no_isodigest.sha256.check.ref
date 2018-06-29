@@ -1,0 +1,12 @@
+       tags: key = "pad", value = "25"
+       tags: key = "partition", value = "100,900,a893c13db982ff064318d1e588c5c040dd06d2d6cd99b2112317b97d950c2276"
+        app: iso_and_partition_no_isodigest
+   iso size: 450 kB
+        pad: 50 kB
+  partition: start 50 kB, size 450 kB
+  full size: 500 kB
+   part ref: a893c13db982ff064318d1e588c5c040dd06d2d6cd99b2112317b97d950c2276
+   checking:       0% 12% 25% 38% 51% 64% 76% 89%100%
+     result: partition sha256 ok
+part sha256: a893c13db982ff064318d1e588c5c040dd06d2d6cd99b2112317b97d950c2276
+     sha256: 456ea4741503c20280b9e77588a75707edf9c66b6180faf689a3d28cb30dde14

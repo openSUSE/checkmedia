@@ -1,0 +1,13 @@
+       tags: key = "md5sum", value = "dbfc197e6d7f9370de4dc4840c81a783"
+       tags: key = "partition", value = "100,900,efda83d92d219c2ee805364cb9902db2"
+        app: iso_and_partition_no_padding
+   iso size: 500 kB
+  partition: start 50 kB, size 450 kB
+  full size: 500 kB
+    iso ref: dbfc197e6d7f9370de4dc4840c81a783
+   part ref: efda83d92d219c2ee805364cb9902db2
+   checking:       0% 12% 25% 38% 51% 64% 76% 89%100%
+     result: iso md5 ok, partition md5 ok
+ iso    md5: dbfc197e6d7f9370de4dc4840c81a783
+part    md5: efda83d92d219c2ee805364cb9902db2
+        md5: 22a6326b9deba5ad6563cbacb6cc676a
