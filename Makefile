@@ -1,5 +1,5 @@
 CC           = gcc
-CFLAGS       = -g -O2 -Wall
+CFLAGS       = -g -O2 -Wall $(RPM_OPT_FLAGS)
 LDFLAGS      = -L. -lmediacheck
 SHARED_FLAGS = -fPIC -fvisibility=hidden
 
@@ -24,10 +24,10 @@ LIBDIR = /usr/lib$(shell ldd /bin/sh | grep -q /lib64/ && echo 64)
 all: checkmedia digestdemo
 
 checkmedia: checkmedia.c $(LIB_FILENAME)
-	$(CC) $(CFLAGS) $(LDFLAGS) checkmedia.c -DVERSION=\"$(VERSION)\" -o $@
+	$(CC) $(CFLAGS) checkmedia.c $(LDFLAGS) -DVERSION=\"$(VERSION)\" -o $@
 
 digestdemo: digestdemo.c $(LIB_FILENAME)
-	$(CC) $(CFLAGS) $(LDFLAGS) digestdemo.c -o $@
+	$(CC) $(CFLAGS) digestdemo.c $(LDFLAGS) -o $@
 
 mediacheck.o: mediacheck.c mediacheck.h
 	$(CC) -c $(CFLAGS) $(SHARED_FLAGS) -o $@ $<
