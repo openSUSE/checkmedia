@@ -53,6 +53,7 @@ int main(int argc, char **argv)
     opt.file_name = argv[optind];
   }
   else {
+    fprintf(stderr, "checkmedia: no file to check specified\n");
     help();
     return 1;
   }
@@ -130,17 +131,17 @@ int main(int argc, char **argv)
   }
 
   printf("     result: ");
-  i = 0;
+  int comma_needed = 0;
   if(media->iso_blocks && mediacheck_digest_valid(media->digest.iso)) {
     printf(
       "iso %s %s",
       mediacheck_digest_name(media->digest.iso),
       mediacheck_digest_ok(media->digest.iso) ? "ok" : "wrong"
     );
-    i = 1;
+    comma_needed = 1;
   }
   if(media->part_blocks && mediacheck_digest_valid(media->digest.part)) {
-    if(i) printf(", ");
+    if(comma_needed) printf(", ");
     printf(
       "partition %s %s",
       mediacheck_digest_name(media->digest.part),
@@ -163,11 +164,11 @@ int main(int argc, char **argv)
     printf("%11s: %s\n", mediacheck_digest_name(media->digest.full), mediacheck_digest_hex(media->digest.full));
   }
 
-  i = mediacheck_digest_ok(media->digest.iso) || mediacheck_digest_ok(media->digest.part) ? 0 : 1;
+  int result = mediacheck_digest_ok(media->digest.iso) || mediacheck_digest_ok(media->digest.part) ? 0 : 1;
 
   mediacheck_done(media);
 
-  return i;
+  return result;
 }
 
 

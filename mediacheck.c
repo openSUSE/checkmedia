@@ -19,6 +19,31 @@
 // exported symbol - all others are not exported by the library
 #define API_SYM __attribute__((visibility("default")))
 
+/*
+ * Here are some ISO9660 file system related constants.
+ *
+ * If in doubt about the ISO9660 layout, check http://alumnus.caltech.edu/~pje/iso9660.html
+ */
+// offset of volume descriptor
+// usually points to "\x01CD001\x01\x00"
+#define ISO9660_MAGIC_START	0x8000
+
+// offset of volume size (in 2 kB units)
+// stored as 32 bit little-endian, followed by a 32 bit big-endian value
+#define ISO9660_VOLUME_SIZE	0x8050
+
+// offset of application identifier (some string)
+#define ISO9660_APP_ID_START	0x823e
+
+// application identifier length
+#define ISO9660_APP_ID_LENGTH	0x80
+
+// offset of application specific data (anything goes)
+#define ISO9660_APP_DATA_START	0x8373
+
+// application specific data length
+#define ISO9660_APP_DATA_LENGTH	0x200
+
 #define MAX_DIGEST_SIZE SHA512_DIGEST_SIZE
 
 typedef enum {
@@ -115,8 +140,8 @@ API_SYM void mediacheck_done(mediacheck_t *media)
  * Call mediacheck_init() before doing this.
  *
  * Normal digest, except that we assume
- *   - 0x0000 - 0x01ff is filled with zeros (0)
- *   - 0x8373 - 0x8572 is filled with spaces (' ').
+ *   - 0x0000 - 0x01ff (mbr) is filled with zeros (0)
+ *   - 0x8373 - 0x8572 (iso9660 app data) is filled with spaces (' ').
  */
 API_SYM void mediacheck_calculate_digest(mediacheck_t *media)
 {
@@ -163,8 +188,10 @@ API_SYM void mediacheck_calculate_digest(mediacheck_t *media)
     process_chunk(media->digest.full, &full_region, chunk, chunk_blocks, buffer);
 
     if(chunk == 0) {
+      // mbr
       memset(buffer, 0, 0x200);
-      memset(buffer + 0x8373, ' ', 0x200);
+      // app data block
+      memset(buffer + ISO9660_APP_DATA_START, ' ', ISO9660_APP_DATA_LENGTH);
     }
 
     process_chunk(media->digest.iso, &iso_region, chunk, chunk_blocks, buffer);
@@ -492,8 +519,6 @@ void digest_data_to_hex(mediacheck_digest_t *digest)
  * Read iso header and fill global iso struct.
  *
  * Note: checksum info is kept in media->app_data[].
- *
- * If in doubt about the ISO9660 layout, check http://alumnus.caltech.edu/~pje/iso9660.html
  */
 void get_info(mediacheck_t *media)
 {
@@ -516,7 +541,7 @@ void get_info(mediacheck_t *media)
    * Check for ISO9660 magic.
    */
   if(
-    lseek(fd, 0x8000, SEEK_SET) == 0x8000 &&
+    lseek(fd, ISO9660_MAGIC_START, SEEK_SET) == ISO9660_MAGIC_START &&
     read(fd, buf, 8) == 8
   ) {
     // yes, 8 bytes
@@ -524,12 +549,12 @@ void get_info(mediacheck_t *media)
   }
 
   /*
-   * ISO size is stored as both little- and big-endian values.
+   * ISO size is stored as both 32 bit little- and big-endian values.
    *
    * Read both and compare as consistency check.
    */
   if(
-    lseek(fd, 0x8050, SEEK_SET) == 0x8050 &&
+    lseek(fd, ISO9660_VOLUME_SIZE, SEEK_SET) == ISO9660_VOLUME_SIZE &&
     read(fd, buf, 8) == 8
   ) {
     unsigned little = 4*(buf[0] + (buf[1] << 8) + (buf[2] << 16) + (buf[3] << 24));
@@ -546,7 +571,7 @@ void get_info(mediacheck_t *media)
    * Read it and show it to the user later.
    */
   if(
-    lseek(fd, 0x823e, SEEK_SET) == 0x823e &&
+    lseek(fd, ISO9660_APP_ID_START, SEEK_SET) == ISO9660_APP_ID_START &&
     read(fd, media->app_id, sizeof media->app_id - 1) == sizeof media->app_id - 1
   ) {
     media->app_id[sizeof media->app_id - 1] = 0;
@@ -569,7 +594,7 @@ void get_info(mediacheck_t *media)
    * Read now and parse it later.
    */
   if(
-    lseek(fd, 0x8373, SEEK_SET) == 0x8373 &&
+    lseek(fd, ISO9660_APP_DATA_START, SEEK_SET) == ISO9660_APP_DATA_START &&
     read(fd, media->app_data, sizeof media->app_data - 1) == sizeof media->app_data - 1
   ) {
     media->app_data[sizeof media->app_data - 1] = 0;

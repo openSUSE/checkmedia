@@ -17,6 +17,48 @@ $Data::Dumper::Sortkeys = 1;
 $Data::Dumper::Terse = 1;
 $Data::Dumper::Indent = 1;
 
+# Here are some ISO9660 file system related constants.
+#
+# If in doubt about the ISO9660 layout, check http://alumnus.caltech.edu/~pje/iso9660.html
+#
+use constant {
+  # offset of volume descriptor
+  # usually points to "\x01CD001\x01\x00"
+  ISO9660_MAGIC_START => 0x8000,
+
+  # offset of volume size (in 2 kB units)
+  # stored as 32 bit little-endian, followed by a 32 bit big-endian value
+  ISO9660_VOLUME_SIZE => 0x8050,
+
+  # application identifier length
+  ISO9660_APP_ID_LENGTH => 0x80,
+
+  # offset of application specific data (anything goes)
+  ISO9660_APP_DATA_START => 0x8373,
+
+  # application specific data length
+  ISO9660_APP_DATA_LENGTH => 0x200,
+};
+
+# Here are some MBR (partition table) related constants.
+#
+# If in doubt about the MBR layout, check https://wiki.osdev.org/Partition_Table
+#
+use constant {
+  # MBR start
+  MBR_OFFSET => 0,
+
+  # offset of MBR magic
+  # points to "\x55\xaa"
+  MBR_MAGIC_START => 0x1fe,
+
+  # offset of partition table in MBR
+  MBR_PARTITION_TABLE => 0x1be,
+
+  # MBR size (in bytes)
+  MBR_LENGTH => 0x200,
+};
+
 sub usage;
 sub read_image_blob;
 sub get_image_type;
@@ -62,7 +104,10 @@ my $digest_part;		# digest calculated over partition
 
 # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
 $image_data->{name} = shift;
-usage 1 if $image_data->{name} eq '';
+if($image_data->{name} eq '') {
+  print STDERR "tagmedia: no image specified\n";
+  usage 1;
+}
 
 $image_data->{write} = $opt_digest || defined $opt_pad || $opt_check || @opt_add_tag || @opt_remove_tag || $opt_clean;
 
@@ -184,14 +229,15 @@ sub get_image_type
 {
   my ($image) = @_;
 
-  # Get iso size from iso9660 header.
+  # Get iso size from ISO9660 header.
   #
-  # Don't verify too much - most of the header might be gone. Checking for
-  # plausible size info should be enough.
+  # Don't verify too much - most of the header might be gone. Since in
+  # ISO9660 sizes are stored both-endian we can do a plausibility check
+  # which should be enough.
   #
-  my $iso_magic_ok = substr($image->{blob}, 0x8000, 8) eq "\x01CD001\x01\x00";
-  my $little = 4 * unpack("V", substr($image->{blob}, 0x8050, 4));
-  my $big = 4 * unpack("N", substr($image->{blob}, 0x8054, 4));
+  my $iso_magic_ok = substr($image->{blob}, ISO9660_MAGIC_START, 8) eq "\x01CD001\x01\x00";
+  my $little = 4 * unpack("V", substr($image->{blob}, ISO9660_VOLUME_SIZE, 4));
+  my $big = 4 * unpack("N", substr($image->{blob}, ISO9660_VOLUME_SIZE + 4, 4));
   if(
     $iso_magic_ok &&
     $little &&
@@ -205,9 +251,12 @@ sub get_image_type
   #
   # Set $image->{part_start}, $image->{part_blocks} (in 0.5 kB units).
   #
-  if(substr($image->{blob}, 0x1fe, 2) eq "\x55\xaa") {
+  if(substr($image->{blob}, MBR_MAGIC_START, 2) eq "\x55\xaa") {
     for (my $idx = 0; $idx < 4; $idx++) {
-      my ($boot, $type, $start, $size) = unpack("Cx3Cx3VV", substr($image->{blob}, 0x1be + 0x10 * $idx, 0x10));
+      my ($boot, $type, $start, $size) = unpack(
+        "Cx3Cx3VV",
+        substr($image->{blob}, MBR_PARTITION_TABLE + 0x10 * $idx, 0x10)
+      );
       if(
         $type &&
         !($boot & 0x7f) &&
@@ -231,6 +280,9 @@ sub get_image_type
 #
 # image: hash with image related data
 # tags: array ref with tag hashes
+#
+# Note: this uses the value passed via '--pad' option and stores it as
+# 'pad' tag.
 #
 sub get_padding
 {
@@ -266,7 +318,7 @@ sub read_tags
 {
   my ($image) = @_;
 
-  my $buf = substr($image->{blob}, 0x8373, 0x200);
+  my $buf = substr($image->{blob}, ISO9660_APP_DATA_START, ISO9660_APP_DATA_LENGTH);
   die "$image->{name}: unsupported image format\n" unless $buf  =~ /^[0-9A-Za-z_=,;! \x00]{512}$/;
   $buf =~ s/[\s\x00]*$//;
 
@@ -301,14 +353,14 @@ sub write_tags
     $buf .= "=$tag->{value}" if defined $tag->{value};
   }
 
-  die "tags too large: \"$buf\"\n" if length($buf) > 0x200;
-  $buf .= " " x (0x200 - length($buf));
+  die "tags too large: \"$buf\"\n" if length($buf) > ISO9660_APP_DATA_LENGTH;
+  $buf .= " " x (ISO9660_APP_DATA_LENGTH - length($buf));
 
   my $len;
   die "$image->{name}: $!\n" unless open $image->{fh}, "+<", $image->{name};
-  die "$image->{name}: $!\n" unless seek $image->{fh}, 0x8373, 0;
-  die "$image->{name}: $!\n" unless $len = syswrite $image->{fh}, $buf, 0x200;
-  die "$image->{name}: failed to update image\n" unless $len == 0x200;
+  die "$image->{name}: $!\n" unless seek $image->{fh}, ISO9660_APP_DATA_START, 0;
+  die "$image->{name}: $!\n" unless $len = syswrite $image->{fh}, $buf, ISO9660_APP_DATA_LENGTH;
+  die "$image->{name}: failed to update image\n" unless $len == ISO9660_APP_DATA_LENGTH;
 
   close $image->{fh};
 }
@@ -409,8 +461,8 @@ sub prepare_buffer
 {
   my $image = $_[0];
 
-  substr($image->{blob}, 0x0000, 0x200) = "\x00" x 0x200;
-  substr($image->{blob}, 0x8373, 0x200) = " " x 0x200;
+  substr($image->{blob}, MBR_OFFSET, MBR_LENGTH) = "\x00" x MBR_LENGTH;
+  substr($image->{blob}, ISO9660_APP_DATA_START, ISO9660_APP_DATA_LENGTH) = " " x ISO9660_APP_DATA_LENGTH;
 }
 
 

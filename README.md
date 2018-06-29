@@ -3,8 +3,8 @@
 ## About
 
 `checkmedia` is a tool to verify SUSE installation media. For this, the
-digest (sha256) is stored within the media images and used to check against
-the caluclated digest.
+digest (e.g. sha256) is stored within the media images and used to check against
+the calculated digest.
 
 Supported digests are: md5, sha1, sha224, sha256, sha384, sha512.
 

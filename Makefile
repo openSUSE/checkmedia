@@ -19,18 +19,14 @@ LIB_SONAME   = $(LIB_NAME).so.$(MAJOR_VERSION)
 DIGEST_SRC  = $(wildcard md5.c sha*.c)
 DIGEST_OBJ  = $(DIGEST_SRC:.c=.o)
 
-ifneq ($(filter x86_64, $(ARCH)),)
-LIBDIR  = /usr/lib64
-else
-LIBDIR  = /usr/lib
-endif
+LIBDIR = /usr/lib$(shell ldd /bin/sh | grep -q /lib64/ && echo 64)
 
 all: checkmedia digestdemo
 
-checkmedia: checkmedia.c $(LIB_FILENAME) mediacheck.h
+checkmedia: checkmedia.c $(LIB_FILENAME)
 	$(CC) $(CFLAGS) $(LDFLAGS) checkmedia.c -DVERSION=\"$(VERSION)\" -o $@
 
-digestdemo: digestdemo.c $(LIB_FILENAME) mediacheck.h
+digestdemo: digestdemo.c $(LIB_FILENAME)
 	$(CC) $(CFLAGS) $(LDFLAGS) digestdemo.c -o $@
 
 mediacheck.o: mediacheck.c mediacheck.h

@@ -100,7 +100,7 @@ void mediacheck_digest_process(mediacheck_digest_t *digest, unsigned char *buffe
 To be called repeatedly to update the digest state.
 
 Note: after looking at the calculated digest (e.g. via
-`mediacheck_digest_hex` or ``mediacheck_digest_ok`) you cannot call
+`mediacheck_digest_hex` or `mediacheck_digest_ok`) you cannot call
 `mediacheck_digest_process` on `digest` any longer.
 
 ### Check if digest is valid
