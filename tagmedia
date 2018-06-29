@@ -443,7 +443,6 @@ sub set_tag
 sub remove_tag
 {
   my ($tags, $key) = @_;
-  my @l;
 
   return [ grep { $_->{key} ne $key } @$tags ];
 }
