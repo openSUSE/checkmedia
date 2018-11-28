@@ -470,9 +470,12 @@ sub prepare_buffer
 
 
 # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
-# process_digest(digest, start, blocks, buf_start, buf_blocks, $buf)
+# process_digest(digest, start, blocks, buf_start, buf_blocks, buf)
 #
 # Update digest.
+#
+# The total digest needs to be calculated from start to start + blocks. The
+# current buffer in buf holds file data from buf_start to buf_start + buf_blocks.
 #
 # digest: digest ref
 # start: region start block
@@ -523,10 +526,6 @@ sub process_digest
 #   (2) $image->{part_blocks} starting from $image->{part_start}
 #
 # $image->{blob_blocks} have already been read and are cached in $image->{blob}.
-#
-# Both regions partly overlap and region 2 can overlap $image->{blob}.
-#
-# This function makes some effort to read the file in only one go.
 #
 # Note: padding has been subtracted from $image->{iso_blocks}.
 #
