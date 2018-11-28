@@ -144,6 +144,36 @@ my $tests = [
     part_blocks => 998,
   },
 
+  {
+    name => "iso_too_small_ends_before_partition_start",
+    digest => "sha256",
+    full_blocks => 1000,
+    iso_blocks => 600,
+    pad_blocks => 100,
+    part_start => 700,
+    part_blocks => 300,
+  },
+
+  {
+    name => "iso_too_small_ends_at_partition_start",
+    digest => "sha256",
+    full_blocks => 1000,
+    iso_blocks => 700,
+    pad_blocks => 100,
+    part_start => 700,
+    part_blocks => 300,
+  },
+
+  {
+    name => "iso_too_small_ends_after_partition_start",
+    digest => "sha256",
+    full_blocks => 1000,
+    iso_blocks => 800,
+    pad_blocks => 100,
+    part_start => 700,
+    part_blocks => 300,
+  },
+
 
 ];
 

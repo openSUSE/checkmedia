@@ -1,0 +1,15 @@
+       tags: key = "pad", value = "25"
+       tags: key = "sha256sum", value = "670a5364e2dbd0353bfdcc4fd285b345366e55eb66708b1f3d728f9a31c30b6f"
+       tags: key = "partition", value = "700,300,5e54749a2cd7cf135d8469df48f3047124527e21c138049980941c3153e5e0d8"
+        app: iso_too_small_ends_before_partition_start
+   iso size: 300 kB
+        pad: 50 kB
+  partition: start 350 kB, size 150 kB
+  full size: 500 kB
+    iso ref: 670a5364e2dbd0353bfdcc4fd285b345366e55eb66708b1f3d728f9a31c30b6f
+   part ref: 5e54749a2cd7cf135d8469df48f3047124527e21c138049980941c3153e5e0d8
+   checking:       0% 12% 25% 38% 51% 64% 76% 89%100%
+     result: iso sha256 ok, partition sha256 ok
+ iso sha256: 670a5364e2dbd0353bfdcc4fd285b345366e55eb66708b1f3d728f9a31c30b6f
+part sha256: 5e54749a2cd7cf135d8469df48f3047124527e21c138049980941c3153e5e0d8
+     sha256: 9c84b2c850265959879166902195d88853ffc4ffe71559833ecde1be64805b3d
