@@ -80,6 +80,7 @@ my $opt_show = 1;
 my $opt_clean = 0;
 my @opt_add_tag;
 my @opt_remove_tag;
+my $opt_verbose;
 
 GetOptions(
   'show'             => \$opt_show,
@@ -90,6 +91,7 @@ GetOptions(
   'add-tag=s'        => \@opt_add_tag,
   'remove-tag=s'     => \@opt_remove_tag,
   'clean'            => \$opt_clean,
+  'verbose|v'        => \$opt_verbose,
   'help'             => sub { usage 0 },
 );
 
@@ -268,6 +270,8 @@ sub get_image_type
       }
     }
   }
+
+  print "iso blocks = $image->{iso_blocks}, partition blocks = $image->{part_blocks} @ $image->{part_start}\n" if $opt_verbose;
 
   die "$image->{name}: unsupported image format\n" unless $image->{iso_blocks} || $image->{part_blocks};
 }
@@ -466,31 +470,45 @@ sub prepare_buffer
 
 
 # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
-# add_to_digest(image, blocks, to_iso, to_part)
+# process_digest(digest, start, blocks, buf_start, buf_blocks, buf)
 #
-# Update digest reading blocks from $image->{fh}.
+# Update digest.
 #
-# blocks: number of blocks to read
-# to_iso: update $digest_iso
-# to_part: update $digest_part
+# The total digest needs to be calculated from start to start + blocks. The
+# current buffer in buf holds file data from buf_start to buf_start + buf_blocks.
+#
+# digest: digest ref
+# start: region start block
+# blocks: region blocks
+# buf_start: buffer start block
+# buf_blocks: buffer blocks
+# buf: buffer ref
 #
 # Note: a block is 0.5 kB.
 #
-sub add_to_digest
+sub process_digest
 {
-  my ($image, $blocks, $to_iso, $to_part) = @_;
+  my ($digest, $start, $blocks, $buf_start, $buf_blocks, $buf) = @_;
 
-  my $buf;
+  my $end = $start + $blocks;
+  my $buf_end = $buf_start + $buf_blocks;
 
-  while($blocks > 0) {
-    # try to read up to 1 MB at a time
-    my $len = $blocks > (1 << 11) ? 1 << 11 : $blocks;
-    my $read_len = sysread $image->{fh}, $buf, $len << 9;
-    die "$image->{name}: read error\n" if $read_len != $len << 9;
-    $digest_iso->add($buf) if $to_iso && $image->{iso_blocks};
-    $digest_part->add($buf) if $to_part && $image->{part_blocks};
-    $blocks -= $len;
+  return if $start >= $buf_end || $end <= $buf_start;
+
+  if($start > $buf_start) {
+    my $skip = $start - $buf_start;
+    $buf_blocks -= $skip;
+    $buf_start = $start;
+    $buf = substr($buf, $skip << 9);
   }
+
+  if($buf_end > $end) {
+    $buf_blocks -= $buf_end - $end;
+    $buf_end = $end;
+    $buf = substr($buf, 0, $buf_blocks << 9);
+  }
+
+  $digest->add($buf);
 }
 
 
@@ -509,52 +527,38 @@ sub add_to_digest
 #
 # $image->{blob_blocks} have already been read and are cached in $image->{blob}.
 #
-# Both regions partly overlap and region 2 can overlap $image->{blob}.
-#
-# This function makes some effort to read the file in only one go.
-#
 # Note: padding has been subtracted from $image->{iso_blocks}.
 #
 sub calculate_digest
 {
   my ($image) = @_;
 
-  $digest_iso->add($image->{blob}) if $image->{iso_blocks};
+  my $iso_start = 0;
+  my $iso_blocks = $image->{iso_blocks};
+  my $part_start = $image->{part_start};
+  my $part_blocks = $image->{part_blocks};
 
-  my $next_stop = $image->{iso_blocks};
-  my $idx = $image->{blob_blocks};
+  my $full_blocks = $part_start + $part_blocks;
+  $full_blocks = $iso_blocks if $iso_blocks > $full_blocks;
 
-  my $iso_rem;
-  my $part_rem;
+  my $pos = $image->{blob_blocks};
+  my $step_blocks = 2048;	# 1 MiB chunks
 
-  if($image->{part_start}) {
-    if($image->{part_start} < $image->{blob_blocks}) {
-      $digest_part->add(
-        substr($image->{blob}, $image->{part_start} << 9, ($image->{blob_blocks} - $image->{part_start}) << 9)
-      );
-      $idx = $image->{blob_blocks};
-    }
-    else {
-      add_to_digest $image, $image->{part_start} - $image->{blob_blocks}, 1, 0;
-      $idx = $image->{part_start};
-    }
+  process_digest $digest_iso, $iso_start, $iso_blocks, 0, $pos, $image->{blob};
+  process_digest $digest_part, $part_start, $part_blocks, 0, $pos, $image->{blob};
 
-    $next_stop = $image->{part_start} + $image->{part_blocks};
-    $next_stop = $image->{iso_blocks} if $image->{iso_blocks} && $image->{iso_blocks} < $next_stop;
+  while($pos < $full_blocks) {
+    my $buf;
+    my $to_read = $full_blocks - $pos;
+    $to_read = $step_blocks if $step_blocks < $to_read;
 
-    $part_rem = $image->{part_start} + $image->{part_blocks} - $next_stop;
-  }
+    my $read_len = sysread $image->{fh}, $buf, $to_read << 9;
+    die "$image->{name}: read error: $to_read blocks @ $pos\n" if $read_len != $to_read << 9;
 
-  add_to_digest $image, $next_stop - $idx, 1, 1;
+    process_digest $digest_iso, $iso_start, $iso_blocks, $pos, $to_read, $buf;
+    process_digest $digest_part, $part_start, $part_blocks, $pos, $to_read, $buf;
 
-  $iso_rem = $image->{iso_blocks} - $next_stop if $image->{iso_blocks};
-
-  if($part_rem) {
-    die "oops, assumption failed\n" if $iso_rem;
-    add_to_digest $image, $part_rem, 0, 1;
-  }
-  elsif($iso_rem) {
-    add_to_digest $image, $iso_rem, 1, 0;
+    $pos += $to_read;
   }
 
   if($image->{iso_blocks}) {
