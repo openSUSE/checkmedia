@@ -59,6 +59,13 @@ use constant {
   MBR_LENGTH => 0x200,
 };
 
+# Some SUSE specific constants.
+#
+use constant {
+  # signature block starts with this string
+  SIGNATURE_MAGIC => "7984fc91-a43f-4e45-bf27-6d3aa08b24cf"
+};
+
 sub usage;
 sub read_image_blob;
 sub get_image_type;
@@ -72,6 +79,10 @@ sub remove_tag;
 sub prepare_buffer;
 sub add_to_digest;
 sub calculate_digest;
+sub export_tags;
+sub export_signature;
+sub import_signature;
+sub normalize_buffer;
 
 my $opt_digest = undef;
 my $opt_check = 0;
@@ -81,18 +92,24 @@ my $opt_clean = 0;
 my @opt_add_tag;
 my @opt_remove_tag;
 my $opt_verbose;
+my $opt_tags_export;
+my $opt_signature_export;
+my $opt_signature_import;
 
 GetOptions(
-  'show'             => \$opt_show,
-  'md5|md5sum'       => sub { $opt_digest = 'md5' },
-  'digest=s'         => \$opt_digest,
-  'check'            => \$opt_check,
-  'pad=i'            => \$opt_pad,
-  'add-tag=s'        => \@opt_add_tag,
-  'remove-tag=s'     => \@opt_remove_tag,
-  'clean'            => \$opt_clean,
-  'verbose|v'        => \$opt_verbose,
-  'help'             => sub { usage 0 },
+  'show'               => \$opt_show,
+  'md5|md5sum'         => sub { $opt_digest = 'md5' },
+  'digest=s'           => \$opt_digest,
+  'check'              => \$opt_check,
+  'pad=i'              => \$opt_pad,
+  'add-tag=s'          => \@opt_add_tag,
+  'remove-tag=s'       => \@opt_remove_tag,
+  'export-tags=s'      => \$opt_tags_export,
+  'export-signature=s' => \$opt_signature_export,
+  'import-signature=s' => \$opt_signature_import,
+  'clean'              => \$opt_clean,
+  'verbose|v'          => \$opt_verbose,
+  'help'               => sub { usage 0 },
 );
 
 my $image_data;			# hash ref with image related data
@@ -137,6 +154,28 @@ set_tag $current_tags, { key => "check", value => 1 } if $opt_check;
 
 get_padding $image_data, $current_tags;
 
+if($opt_tags_export) {
+  export_tags $image_data, $opt_tags_export;
+
+  exit 0;
+}
+
+if($opt_signature_export) {
+  export_signature $image_data, $opt_signature_export;
+
+  exit 0;
+}
+
+if($opt_signature_import) {
+  import_signature $image_data, $opt_signature_import;
+
+  exit 0;
+}
+
+if(my $sig = get_tag $current_tags, "signature") {
+  $image_data->{signature_start} = $sig->{value} + 0;
+}
+
 prepare_buffer $image_data;
 
 # print Dumper $image_data;
@@ -147,6 +186,10 @@ calculate_digest $image_data if $opt_digest;
 
 # finally close file handle (had been opened in read_image_blob())
 close $image_data->{fh};
+
+if($image_data->{signature_start}) {
+  set_tag $current_tags, { key => "signature", value => $image_data->{signature_start} };
+}
 
 for (@opt_add_tag) {
   set_tag $current_tags, parse_tag($_);
@@ -187,6 +230,9 @@ sub usage
       --check                   Tell installer to run media check at startup.
       --add-tag foo=bar         Add tag foo with value bar.
       --remove-tag foo          Remove tag foo.
+      --export-tags FILE        Export raw tag data to FILE.
+      --export-signature FILE   Export image signature to FILE.
+      --import-signature FILE   Import image signature from FILE.
       --clean                   Remove all tags.
       --help                    Write this help text.
 
@@ -555,6 +601,8 @@ sub calculate_digest
     my $read_len = sysread $image->{fh}, $buf, $to_read << 9;
     die "$image->{name}: read error: $to_read blocks @ $pos\n" if $read_len != $to_read << 9;
 
+    normalize_buffer $image, $pos, \$buf;
+
     process_digest $digest_iso, $iso_start, $iso_blocks, $pos, $to_read, $buf;
     process_digest $digest_part, $part_start, $part_blocks, $pos, $to_read, $buf;
 
@@ -579,5 +627,142 @@ sub calculate_digest
       key => "partition",
       value => "$image->{part_start},$image->{part_blocks},$digest_part"
     }
+  }
+}
+
+
+# - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+# export_tags(image, file)
+#
+# Export raw tag data from image to file.
+#
+# image: hash with image related data
+# file: file name
+#
+sub export_tags
+{
+  my ($image, $file) = @_;
+
+  my $buf = substr($image->{blob}, ISO9660_APP_DATA_START, ISO9660_APP_DATA_LENGTH);
+
+  if(open my $f, ">", $file) {
+    print $f $buf;
+    close $f;
+  }
+  else {
+    die "$file: $!\n";
+  }
+}
+
+
+# - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+# export_signature(image, file)
+#
+# Export signature data from image to file.
+#
+# image: hash with image related data
+# file: file name
+#
+sub export_signature
+{
+  my ($image, $file) = @_;
+  my $sig = get_tag $current_tags, "signature";
+
+  my $buf;
+
+  die "no signature location found\n" if !$sig || $sig->{value} == 0;
+  die "$image->{name}: $!\n" unless seek $image->{fh}, $sig->{value} * 0x200, 0;
+  die "$image->{name}: $!\n" unless 0x800 == sysread $image->{fh}, $buf, 0x800;
+
+  die "invalid signature block\n" if SIGNATURE_MAGIC ne substr($buf, 0, length SIGNATURE_MAGIC);
+
+  substr($buf, 0, 0x40) = "";
+
+  $buf =~ s/\x00*$//;
+
+  if(open my $f, ">", $file) {
+    print $f $buf;
+    close $f;
+  }
+  else {
+    die "$file: $!\n";
+  }
+}
+
+
+# - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+# import_signature(image, file)
+#
+# Import signature data from file to image.
+#
+# image: hash with image related data
+# file: file name
+#
+sub import_signature
+{
+  my ($image, $file) = @_;
+  my $sig = get_tag $current_tags, "signature";
+
+  my $buf;
+
+  die "no signature location found\n" if !$sig || $sig->{value} == 0;
+  die "$image->{name}: $!\n" unless seek $image->{fh}, $sig->{value} * 0x200, 0;
+  die "$image->{name}: $!\n" unless 0x800 == sysread $image->{fh}, $buf, 0x800;
+
+  die "invalid signature block\n" if SIGNATURE_MAGIC ne substr($buf, 0, length SIGNATURE_MAGIC);
+
+  my $buf2;
+
+  if(open my $f, "<", $file) {
+    local $/;
+    $buf2 = <$f>;
+    close $f;
+  }
+  else {
+    die "$file: $!\n";
+  }
+
+  if(length($buf2) > 0x800 - 0x40) {
+    die "$file: signature too large\n";
+  }
+
+  $buf = substr($buf, 0, 0x40) . $buf2;
+  $buf .= "\x00" x (0x800 - length($buf));
+
+  die "$image->{name}: $!\n" unless open $image->{fh}, "+<", $image->{name};
+  die "$image->{name}: $!\n" unless seek $image->{fh}, $sig->{value} * 0x200, 0;
+  die "$image->{name}: $!\n" unless 0x800 == syswrite $image->{fh}, $buf, 0x800;
+  close $image->{fh};
+}
+
+
+sub normalize_buffer
+{
+  my ($image, $pos, $buf_ref) = @_;
+  my $blocks = length($$buf_ref) >> 9;
+
+  if(!$image->{signature_start}) {
+    for (my $i = 0; $i < $blocks; $i++) {
+      if(SIGNATURE_MAGIC eq substr($$buf_ref, $i << 9, length SIGNATURE_MAGIC)) {
+        $image->{signature_start} = $pos + $i;
+      }
+    }
+  }
+
+  if($image->{signature_start}) {
+    my $signature_len = 4;	# 2k
+    my $x = $image->{signature_start} - $pos;
+    if($x >= 0 && $x < $blocks) {
+      for (my $i = 0; $i < $signature_len && $x + $i < $blocks; $i++) {
+        if($i == 0) {
+          # leave 0x40 bytes intact in first block
+          substr($$buf_ref, ($x << 9) + 0x40, 0x200 - 0x40) = "\x00" x (0x200 - 0x40);
+        }
+        else {
+          substr($$buf_ref, ($x + $i) << 9, 0x200) = "\x00" x 0x200;
+        }
+      }
+    }
+    # TODO: not aligned!
   }
 }

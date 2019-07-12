@@ -13,6 +13,8 @@ typedef struct mediacheck_digest_s mediacheck_digest_t;
 
 typedef int (* mediacheck_progress_t)(unsigned percent);
 
+typedef enum { sig_not_signed, sig_not_checked, sig_ok, sig_bad } sign_state_t;
+
 typedef struct {
   char *file_name;				/* file to check */
   mediacheck_progress_t progress;		/* progress function */
@@ -30,6 +32,17 @@ typedef struct {
   } digest;
 
   struct {
+    unsigned start;				/* start block of signature (if any), in 0.5 kB units */
+    struct {					/* signature state */
+      sign_state_t id;				/* ... numerical */
+      char *str;				/* ... as string */
+    } state;
+    char magic[0x40];				/* 64 bytes */
+    char data[0x800 - 0x40];			/* 2k block - 64 bytes */
+    char blob[ISO9660_APP_DATA_LENGTH];		/* data the signature applies to */
+  } signature;
+
+  struct {
     char *key, *value;
   } tags[16];					/* up to 16 key - value pairs */
 
@@ -38,7 +51,7 @@ typedef struct {
   unsigned err_block;				/* read error position (in 0.5 kB units) */
 
   char app_id[ISO9660_APP_ID_LENGTH + 1];	/* application id */
-  char app_data[ISO9660_APP_DATA_LENGTH + 1];	/* app specific data*/
+  char app_data[ISO9660_APP_DATA_LENGTH + 1];	/* app specific data */
 
   int last_percent;				/* last percentage shown by progress function */
 } mediacheck_t;
