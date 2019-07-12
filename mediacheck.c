@@ -98,7 +98,7 @@ static void update_progress(mediacheck_t *media, unsigned blocks);
 static void process_chunk(mediacheck_digest_t *digest, chunk_region_t *region, unsigned chunk, unsigned chunk_blocks, unsigned char *buffer);
 static void normalize_chunk(mediacheck_t *media, unsigned chunk, unsigned chunk_blocks, unsigned char *buffer);
 static void set_signature_state(mediacheck_t *media, sign_state_t state);
-static void verify_signature(mediacheck_t *media);
+extern void verify_signature(mediacheck_t *media);
 
 /*
  * Read image file and gather info about it.
@@ -859,8 +859,66 @@ void set_signature_state(mediacheck_t *media, sign_state_t state)
  */
 void verify_signature(mediacheck_t *media)
 {
+  char tmp_dir[] = "/tmp/mediacheck.XXXXXX";
+  char *buf;
+  int cmd_err;
+  FILE *f;
+
   if(!media->signature.start || media->signature.state.id == sig_not_signed) return;
 
+  if(!mkdtemp(tmp_dir)) return;
 
+  asprintf(&buf, "%s/foo", tmp_dir);
 
+  if((f = fopen(buf, "w"))) {
+    fwrite(media->signature.blob, 1, sizeof media->signature.blob, f);
+    fclose(f);
+  }
+
+  free(buf);
+
+  asprintf(&buf, "%s/foo.asc", tmp_dir);
+
+  if((f = fopen(buf, "w"))) {
+    fprintf(f, "%s", media->signature.data);
+    fclose(f);
+  }
+
+  free(buf);
+
+  // printf("tmp dir: %s\n", tmp_dir);
+
+  asprintf(&buf,
+    "/usr/bin/gpg --batch --homedir %s --no-default-keyring --ignore-time-conflict --ignore-valid-from "
+    "--keyring %s/sign.gpg --import /usr/lib/rpm/gnupg/keys/* >%s/gpg_keys.log 2>&1",
+    tmp_dir, tmp_dir, tmp_dir
+  );
+
+  cmd_err = WEXITSTATUS(system(buf));
+
+  free(buf);
+
+  // printf("gpg: exit code: %d\n", cmd_err);
+
+  if(!cmd_err) {
+    asprintf(&buf,
+      "/usr/bin/gpg --batch --homedir %s --no-default-keyring --ignore-time-conflict --ignore-valid-from "
+      "--keyring %s/sign.gpg --verify %s/foo.asc %s/foo >%s/gpg_sign.log 2>&1",
+      tmp_dir, tmp_dir, tmp_dir, tmp_dir, tmp_dir
+    );
+
+    cmd_err = WEXITSTATUS(system(buf));
+
+    free(buf);
+
+    // printf("gpg: exit code: %d\n", cmd_err);
+
+    set_signature_state(media, cmd_err ? sig_bad : sig_ok);
+  }
+
+  asprintf(&buf, "/usr/bin/rm -r %s", tmp_dir);
+
+  system(buf);
+
+  free(buf);
 }

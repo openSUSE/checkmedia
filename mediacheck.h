@@ -40,6 +40,8 @@ typedef struct {
     char magic[0x40];				/* 64 bytes */
     char data[0x800 - 0x40];			/* 2k block - 64 bytes */
     char blob[ISO9660_APP_DATA_LENGTH];		/* data the signature applies to */
+    char *gpg_keys_log;				/* gpg output from key import */
+    char *gpg_sign_log;				/* gpg output from signature check */
   } signature;
 
   struct {
