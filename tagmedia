@@ -736,6 +736,20 @@ sub import_signature
 }
 
 
+# - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+# normalize_buffer(image, pos, buffer_ref)
+#
+# If buffer contains signature block (2 kiB), clear signature block.
+# A cleared signature block containts 0x40 bytes magic header, the rest is
+# all zeros (0).
+#
+# This function looks for a signature block and returns its position in
+# $image->{signature_start} if $image->{signature_start} is unset.
+#
+# image: hash with image related data
+# pos: block number of buffer start
+# buffer_ref: reference to buffer; buffer may get modified
+#
 sub normalize_buffer
 {
   my ($image, $pos, $buf_ref) = @_;
@@ -750,7 +764,7 @@ sub normalize_buffer
   }
 
   if($image->{signature_start}) {
-    my $signature_len = 4;	# 2k
+    my $signature_len = 4;	# 2 kiB
     my $x = $image->{signature_start} - $pos;
     if($x >= 0 && $x < $blocks) {
       for (my $i = 0; $i < $signature_len && $x + $i < $blocks; $i++) {
@@ -763,6 +777,5 @@ sub normalize_buffer
         }
       }
     }
-    # TODO: not aligned!
   }
 }
