@@ -112,6 +112,10 @@ int main(int argc, char **argv)
       );
     }
 
+    if(media->signature.start) {
+      printf(" sign block: %d\n", media->signature.start);
+    }
+
     if(mediacheck_digest_valid(media->digest.iso)) {
       printf("    iso ref: %s\n", mediacheck_digest_hex_ref(media->digest.iso));
     }
@@ -163,6 +167,20 @@ int main(int argc, char **argv)
   if(mediacheck_digest_valid(media->digest.full)) {
     printf("%11s: %s\n", mediacheck_digest_name(media->digest.full), mediacheck_digest_hex(media->digest.full));
   }
+
+  if(opt.verbose) {
+    if(media->signature.gpg_keys_log) {
+      printf("# -- gpg key import log\n%s", media->signature.gpg_keys_log);
+    }
+    if(media->signature.gpg_sign_log) {
+      printf("# -- gpg signature check log\n%s", media->signature.gpg_sign_log);
+    }
+    if(media->signature.gpg_keys_log || media->signature.gpg_sign_log) {
+      printf("# --\n");
+    }
+  }
+
+  printf("  signature: %s\n", media->signature.state.str);
 
   int result = mediacheck_digest_ok(media->digest.iso) || mediacheck_digest_ok(media->digest.part) ? 0 : 1;
 
