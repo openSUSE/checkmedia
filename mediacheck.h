@@ -13,7 +13,7 @@ typedef struct mediacheck_digest_s mediacheck_digest_t;
 
 typedef int (* mediacheck_progress_t)(unsigned percent);
 
-typedef enum { sig_not_signed, sig_not_checked, sig_ok, sig_bad } sign_state_t;
+typedef enum { sig_not_signed, sig_not_checked, sig_ok, sig_bad, sig_bad_no_key } sign_state_t;
 
 typedef struct {
   char *file_name;				/* file to check */
@@ -35,7 +35,7 @@ typedef struct {
     unsigned start;				/* start block of signature (if any), in 0.5 kB units */
     struct {					/* signature state */
       sign_state_t id;				/* ... numerical */
-      char *str;				/* ... as string */
+      char *str;				/* ... as string (static, don't free) */
     } state;
     char magic[0x40];				/* 64 bytes */
     char data[0x800 - 0x40];			/* 2k block - 64 bytes */

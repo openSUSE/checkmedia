@@ -85,7 +85,7 @@ typedef struct {
 
 // corresponds to sign_state_t
 static char *sign_states[] = {
-  "not signed", "not checked", "ok", "bad"
+  "not signed", "not checked", "ok", "bad", "bad (no key)"
 };
 
 static void digest_ctx_init(mediacheck_digest_t *digest);
@@ -141,6 +141,9 @@ API_SYM void mediacheck_done(mediacheck_t *media)
   mediacheck_digest_done(media->digest.iso);
   mediacheck_digest_done(media->digest.part);
   mediacheck_digest_done(media->digest.full);
+
+  free(media->signature.gpg_keys_log);
+  free(media->signature.gpg_sign_log);
 
   free(media);
 }
@@ -838,6 +841,7 @@ void normalize_chunk(mediacheck_t *media, unsigned chunk, unsigned chunk_blocks,
   }
 }
 
+
 /*
  * Set signature state.
  *
@@ -856,6 +860,9 @@ void set_signature_state(mediacheck_t *media, sign_state_t state)
  * Verify signature.
  *
  * Call mediacheck_init() before doing this.
+ *
+ * The is function imports all keys from /usr/lib/rpm/gnupg/keys into a
+ * temporary key ring and then runs gpg to verify the signature.
  */
 void verify_signature(mediacheck_t *media)
 {
@@ -886,8 +893,6 @@ void verify_signature(mediacheck_t *media)
 
   free(buf);
 
-  // printf("tmp dir: %s\n", tmp_dir);
-
   asprintf(&buf,
     "/usr/bin/gpg --batch --homedir %s --no-default-keyring --ignore-time-conflict --ignore-valid-from "
     "--keyring %s/sign.gpg --import /usr/lib/rpm/gnupg/keys/* >%s/gpg_keys.log 2>&1",
@@ -898,7 +903,17 @@ void verify_signature(mediacheck_t *media)
 
   free(buf);
 
-  // printf("gpg: exit code: %d\n", cmd_err);
+  asprintf(&buf, "%s/gpg_keys.log", tmp_dir);
+
+  if((f = fopen(buf, "r"))) {
+    char txt[4096] = {};	// just big enough
+    fread(txt, 1, sizeof txt - 1, f);
+    fclose(f);
+    free(media->signature.gpg_keys_log);
+    asprintf(&media->signature.gpg_keys_log, "%sgpg: exit code: %d\n", txt, cmd_err);
+  }
+
+  free(buf);
 
   if(!cmd_err) {
     asprintf(&buf,
@@ -911,9 +926,28 @@ void verify_signature(mediacheck_t *media)
 
     free(buf);
 
-    // printf("gpg: exit code: %d\n", cmd_err);
+    asprintf(&buf, "%s/gpg_sign.log", tmp_dir);
 
-    set_signature_state(media, cmd_err ? sig_bad : sig_ok);
+    if((f = fopen(buf, "r"))) {
+      char txt[4096] = {};	// just big enough
+      fread(txt, 1, sizeof txt - 1, f);
+      fclose(f);
+      free(media->signature.gpg_sign_log);
+      asprintf(&media->signature.gpg_sign_log, "%sgpg: exit code: %d\n", txt, cmd_err);
+    }
+
+    free(buf);
+
+    set_signature_state(media, sig_bad);
+
+    if(media->signature.gpg_sign_log) {
+      if(strstr(media->signature.gpg_sign_log, "gpg: Good signature ")) {
+        set_signature_state(media, sig_ok);
+      }
+      if(strstr(media->signature.gpg_sign_log, "gpg: Can't check signature: No public key")) {
+        set_signature_state(media, sig_bad_no_key);
+      }
+    }
   }
 
   asprintf(&buf, "/usr/bin/rm -r %s", tmp_dir);
