@@ -7,3 +7,4 @@
      result: partition sha224 ok
 part sha224: 537b8f7d6b86fc36e3c14b447884be48471738bc90eec924c724a915
      sha224: 9ebc68a1ef6fabcfff6f7986be9f6e68bb3a5a6cb7eb0e00b59264dd
+  signature: not signed

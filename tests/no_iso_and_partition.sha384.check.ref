@@ -7,3 +7,4 @@
      result: partition sha384 ok
 part sha384: 72f62d11e63b32275d80b44ab4456415b2496e27bedfffd577f8acb2f4e09abcb108001cb11b36c0195479203b6fcda5
      sha384: 79d255e8b575743750385ed3c8f6d0054afd494df1d2c36dbbafb502ad43b2c1aae4a0310cdb30ec9b75c0f227076f62
+  signature: not signed
