@@ -61,6 +61,10 @@ use constant {
 
 # Some SUSE specific constants.
 #
+# see
+#   https://github.com/openSUSE/mksusecd/blob/master/mksusecd
+#   https://github.com/OSInside/kiwi/blob/master/kiwi/iso_tools/iso.py
+#
 use constant {
   # signature block starts with this string
   SIGNATURE_MAGIC => "7984fc91-a43f-4e45-bf27-6d3aa08b24cf"
