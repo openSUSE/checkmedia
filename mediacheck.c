@@ -85,7 +85,7 @@ typedef struct {
 
 // corresponds to sign_state_t
 static char *sign_states[] = {
-  "not signed", "not checked", "ok", "bad", "bad (no key)"
+  "not signed", "not checked", "ok", "bad", "bad (no matching key)"
 };
 
 static void digest_ctx_init(mediacheck_digest_t *digest);
@@ -144,8 +144,27 @@ API_SYM void mediacheck_done(mediacheck_t *media)
 
   free(media->signature.gpg_keys_log);
   free(media->signature.gpg_sign_log);
+  free(media->signature.key_file);
 
   free(media);
+}
+
+
+/*
+ * Set a specific public key to use for signature checking.
+ *
+ * If nothing is set, all keys from /usr/lib/rpm/gnupg/keys/ are used.
+ */
+API_SYM void mediacheck_set_public_key(mediacheck_t *media, char *key_file)
+{
+  if(!media) return;
+
+  free(media->signature.key_file);
+  media->signature.key_file = NULL;
+
+  if(key_file) {
+    media->signature.key_file = strdup(key_file);
+  }
 }
 
 
@@ -895,8 +914,11 @@ void verify_signature(mediacheck_t *media)
 
   asprintf(&buf,
     "/usr/bin/gpg --batch --homedir %s --no-default-keyring --ignore-time-conflict --ignore-valid-from "
-    "--keyring %s/sign.gpg --import /usr/lib/rpm/gnupg/keys/* >%s/gpg_keys.log 2>&1",
-    tmp_dir, tmp_dir, tmp_dir
+    "--keyring %s/sign.gpg --import %s >%s/gpg_keys.log 2>&1",
+    tmp_dir,
+    tmp_dir,
+    media->signature.key_file ?: "/usr/lib/rpm/gnupg/keys/*",
+    tmp_dir
   );
 
   cmd_err = WEXITSTATUS(system(buf));

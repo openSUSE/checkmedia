@@ -31,7 +31,7 @@ The actual verification process is done by a separate [libmediacheck](mediacheck
 
 On the latest SUSE media the application_data block with the tags described
 above can be signed. This allows checkmedia to ensure the media integrity by
-also verifying this signature. checkmedia uses the public keys from `/usr/lib/rpm/gnupg/keys`.
+also verifying this signature.
 
 For this, a tag 'signature' is added pointing to a 2 kiB block to be used
 for the gpg signature of the 512 bytes application_data block. The tag is
@@ -42,7 +42,8 @@ To create signed media, use `tagmedia --export-tags foo` to export the tag
 block to file `foo`. Then create a detached signature with gpg (`foo.asc`)
 and add the signature to the medium with `tagmedia --import-signature foo.asc`.
 
-To verify, ensure the public part of the gpg key is in `/usr/lib/rpm/gnupg/keys`.
+For the verification, the public keys in `/usr/lib/rpm/gnupg/keys` are used. Or
+specify the public gpg key to use with the `--key-file` option to checkmedia.
 
 ## Examples
 

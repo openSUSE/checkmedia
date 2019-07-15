@@ -42,6 +42,7 @@ typedef struct {
     char blob[ISO9660_APP_DATA_LENGTH];		/* data the signature applies to */
     char *gpg_keys_log;				/* gpg output from key import */
     char *gpg_sign_log;				/* gpg output from signature check */
+    char *key_file;				/* gpg public key to use for signature check */
   } signature;
 
   struct {
@@ -80,6 +81,11 @@ mediacheck_t *mediacheck_init(char *file_name, mediacheck_progress_t progress);
  * Free resources associated with 'media'.
  */
 void mediacheck_done(mediacheck_t *media);
+
+/*
+ * Set specific public key for signature checking.
+ */
+void mediacheck_set_public_key(mediacheck_t *media, char *key_file);
 
 /*
  * Run the actual media check.

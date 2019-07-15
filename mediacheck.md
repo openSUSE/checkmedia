@@ -46,6 +46,15 @@ void mediacheck_done(mediacheck_t *media);
 
 Free resources associated with `media`.
 
+### Set public gpg key for signature verification
+
+```
+void mediacheck_set_public_key(mediacheck_t *media, char *key_file);
+
+```
+
+If no key is set, all keys from `/usr/lib/rpm/gnupg/keys` are used.
+
 ### Run the actual media check
 
 ```
