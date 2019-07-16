@@ -694,7 +694,8 @@ void get_info(mediacheck_t *media)
           lseek(fd, media->signature.start * 0x200, SEEK_SET) == media->signature.start * 0x200 &&
           read(fd, media->signature.magic, sizeof media->signature.magic) == sizeof media->signature.magic &&
           read(fd, media->signature.data, sizeof media->signature.data) == sizeof media->signature.data &&
-          !memcmp(media->signature.magic, SIGNATURE_MAGIC, sizeof SIGNATURE_MAGIC - 1)
+          !memcmp(media->signature.magic, SIGNATURE_MAGIC, sizeof SIGNATURE_MAGIC - 1) &&
+          media->signature.data[0]
         ) {
           media->signature.magic[sizeof media->signature.magic - 1] = 0;
           media->signature.data[sizeof media->signature.data - 1] = 0;
