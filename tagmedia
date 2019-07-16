@@ -674,11 +674,11 @@ sub export_signature
 
   my $buf;
 
-  die "no signature location found\n" if !$sig || $sig->{value} == 0;
+  die "$image->{name}: no signature location found\n" if !$sig || $sig->{value} == 0;
   die "$image->{name}: $!\n" unless seek $image->{fh}, $sig->{value} * 0x200, 0;
   die "$image->{name}: $!\n" unless 0x800 == sysread $image->{fh}, $buf, 0x800;
 
-  die "invalid signature block\n" if SIGNATURE_MAGIC ne substr($buf, 0, length SIGNATURE_MAGIC);
+  die "$image->{name}: invalid signature block\n" if SIGNATURE_MAGIC ne substr($buf, 0, length SIGNATURE_MAGIC);
 
   substr($buf, 0, 0x40) = "";
 
@@ -709,11 +709,11 @@ sub import_signature
 
   my $buf;
 
-  die "no signature location found\n" if !$sig || $sig->{value} == 0;
+  die "$image->{name}: no signature location found\n" if !$sig || $sig->{value} == 0;
   die "$image->{name}: $!\n" unless seek $image->{fh}, $sig->{value} * 0x200, 0;
   die "$image->{name}: $!\n" unless 0x800 == sysread $image->{fh}, $buf, 0x800;
 
-  die "invalid signature block\n" if SIGNATURE_MAGIC ne substr($buf, 0, length SIGNATURE_MAGIC);
+  die "$image->{name}: invalid signature block\n" if SIGNATURE_MAGIC ne substr($buf, 0, length SIGNATURE_MAGIC);
 
   my $buf2;
 
