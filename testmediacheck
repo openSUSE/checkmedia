@@ -2,13 +2,18 @@
 
 use strict;
 
+use File::Temp;
 use Getopt::Long;
 
 sub verify_test;
 sub run_test;
 sub create_image;
+sub gpg_init;
+sub sign_image;
 
 my $testdir = "tests";
+my $gpg_dir1;
+my $gpg_dir2;
 
 # store reference output, don't do checks
 my $opt_create_reference;
@@ -174,7 +179,49 @@ my $tests = [
     part_blocks => 300,
   },
 
+  {
+    name => "iso_and_partition_not_signed",
+    digest => "sha256",
+    full_blocks => 1000,
+    iso_blocks => 900,
+    pad_blocks => 100,
+    part_start => 100,
+    part_blocks => 900,
+    sign => 1,
+  },
 
+  {
+    name => "iso_and_partition_signed_ok",
+    digest => "sha256",
+    full_blocks => 1000,
+    iso_blocks => 900,
+    pad_blocks => 100,
+    part_start => 100,
+    part_blocks => 900,
+    sign => 2,
+  },
+
+  {
+    name => "iso_and_partition_signed_bad",
+    digest => "sha256",
+    full_blocks => 1000,
+    iso_blocks => 900,
+    pad_blocks => 100,
+    part_start => 100,
+    part_blocks => 900,
+    sign => 3,
+  },
+
+  {
+    name => "iso_and_partition_signed_wrong_key",
+    digest => "sha256",
+    full_blocks => 1000,
+    iso_blocks => 900,
+    pad_blocks => 100,
+    part_start => 100,
+    part_blocks => 900,
+    sign => 4,
+  },
 ];
 
 
@@ -183,6 +230,9 @@ $ENV{LD_LIBRARY_PATH} = ".";
 
 my $count = 0;
 my $failed = 0;
+
+$gpg_dir1 = gpg_init;
+$gpg_dir2 = gpg_init;
 
 for my $test (@$tests) {
   $count++;
@@ -246,7 +296,27 @@ sub run_test
   }
 
   system "./tagmedia --digest $digest $pad $config->{tag_options} $base.img >$base.$digest.tag$ref";
-  system "./checkmedia -v $base.img >$base.$digest.check$ref";
+
+  sign_image "$base.img", $config->{sign};
+
+  my $verbose;
+  $verbose = "-v" if $config->{sign} <= 1;	# avoid gpg log
+
+  system "./checkmedia $verbose --key-file $gpg_dir1/test.pub $base.img >$base.$digest.check$ref";
+
+  # patch out actual checksum as it varies for each run
+  if(!$verbose) {
+    if(open my $f, "$base.$digest.check$ref") {
+      local $/;
+      my $log = <$f>;
+      close $f;
+      if(open my $f, ">$base.$digest.check$ref") {
+        $log =~ s/(sha256: )(\S+)/${1}*/g;
+        print $f $log;
+        close $f;
+      }
+    }
+  }
 }
 
 
@@ -329,5 +399,69 @@ sub create_image
     syswrite $f, "qrst";
   }
 
+  # reserve signature block
+  if($config->{sign} && $config->{part_blocks} > 164) {
+    seek $f, (($config->{part_start} + 160)<< 9), 0;
+    syswrite $f, "7984fc91-a43f-4e45-bf27-6d3aa08b24cf";
+  }
+
   close $f;
+}
+
+
+# - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+# Setup gpg dir and create key pair.
+#
+sub gpg_init
+{
+  my $gpg_dir = File::Temp::tempdir("/tmp/testmediacheck.XXXXXXXX", CLEANUP => 1);
+
+  (my $c = <<"  = = = = = = = =") =~ s/^ {4}//mg;
+    %no-ask-passphrase
+    %no-protection
+    %transient-key
+    Key-Type: RSA
+    Key-Length: 2048
+    Name-Real: test Signing Key
+    Name-Comment: transient key
+    %pubring test.pub
+    %secring test.sec
+    %commit
+  = = = = = = = =
+
+  if(open my $p, "| cd $gpg_dir ; /usr/bin/gpg --homedir=$gpg_dir --batch --armor --debug-quick-random --gen-key - 2>/dev/null") {
+    print $p $c;
+    close $p;
+  }
+
+  system "gpg --homedir=$gpg_dir --import $gpg_dir/test.pub >/dev/null 2>&1";
+
+  return $gpg_dir;
+}
+
+
+# - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+# Sign image.
+#
+# type:
+#   0: no signature (no signature block)
+#   1: no signature (empty signature block)
+#   2: signature ok
+#   3: signature bad
+#   4: signature with wrong key
+#
+sub sign_image
+{
+  my ($file, $type) = @_;
+
+  return if $type <= 1;
+
+  my $gpg_dir = $gpg_dir1;
+
+  $gpg_dir = $gpg_dir2 if $type == 4;	# wrong key
+
+  system "./tagmedia --export-tags $gpg_dir/foo $file";
+  system "echo foo >>$gpg_dir/foo" if $type == 3;	# bad signature
+  system "/usr/bin/gpg --homedir=$gpg_dir --batch --yes --armor --detach-sign $gpg_dir/foo";
+  system "./tagmedia --import-signature $gpg_dir/foo.asc $file";
 }

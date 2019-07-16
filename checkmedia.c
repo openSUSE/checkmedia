@@ -11,12 +11,14 @@ struct {
   unsigned help:1;
   unsigned version:1;
   char *file_name;
+  char *key_file;
 } opt;
 
 struct option options[] = {
   { "help", 0, NULL, 'h' },
   { "verbose", 0, NULL, 'v' },
   { "version", 0, NULL, 1 },
+  { "key-file", 1, NULL, 2 },
   { }
 };
 
@@ -32,6 +34,10 @@ int main(int argc, char **argv)
     switch(i) {
       case 1:
         opt.version = 1;
+        break;
+
+      case 2:
+        opt.key_file = optarg;
         break;
 
       case 'v':
@@ -59,6 +65,8 @@ int main(int argc, char **argv)
   }
 
   media = mediacheck_init(opt.file_name, progress);
+
+  if(opt.key_file) mediacheck_set_public_key(media, opt.key_file);
 
   if(opt.verbose) {
     for(i = 0; i < sizeof media->tags / sizeof *media->tags; i++) {
@@ -110,6 +118,10 @@ int main(int argc, char **argv)
         media->full_blocks >> 1,
         (media->full_blocks & 1) ? ".5" : ""
       );
+    }
+
+    if(media->signature.start) {
+      printf(" sign block: %d\n", media->signature.start);
     }
 
     if(mediacheck_digest_valid(media->digest.iso)) {
@@ -164,6 +176,20 @@ int main(int argc, char **argv)
     printf("%11s: %s\n", mediacheck_digest_name(media->digest.full), mediacheck_digest_hex(media->digest.full));
   }
 
+  if(opt.verbose) {
+    if(media->signature.gpg_keys_log) {
+      printf("# -- gpg key import log\n%s", media->signature.gpg_keys_log);
+    }
+    if(media->signature.gpg_sign_log) {
+      printf("# -- gpg signature check log\n%s", media->signature.gpg_sign_log);
+    }
+    if(media->signature.gpg_keys_log || media->signature.gpg_sign_log) {
+      printf("# --\n");
+    }
+  }
+
+  printf("  signature: %s\n", media->signature.state.str);
+
   int result = mediacheck_digest_ok(media->digest.iso) || mediacheck_digest_ok(media->digest.part) ? 0 : 1;
 
   mediacheck_done(media);
@@ -183,6 +209,7 @@ void help()
     "Check SUSE installation media.\n"
    "\n"
     "Options:\n"
+    "      --key-file FILE   Use public key in FILE for signature check.\n"
     "      --version         Show checkmedia version.\n"
     "  -v, --verbose         Show more detailed info.\n"
     "  -h, --help            Show this text.\n"

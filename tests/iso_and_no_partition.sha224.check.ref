@@ -9,3 +9,4 @@
      result: iso sha224 ok
  iso sha224: e421b915f39bb7497b822b6c8afc73d3e38d09d0b1c5c6a6a6013d93
      sha224: 3d71020ccbeeb40f9cf42d481fede64ab6649a338f20c67275a874e7
+  signature: not signed

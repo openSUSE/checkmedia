@@ -22,27 +22,57 @@ the result against the stored digest.
 To avoid problems with isohybrid images, `checkmedia` also does not check the
 first 512 bytes of the iso image (isohybrid writes an MBR there).
 
+If a signature block is present the block itself is also exluded from
+digest calculation.
+
 The actual verification process is done by a separate [libmediacheck](mediacheck.md) library.
 
+## Signing media
+
+On the latest SUSE media the application_data block with the tags described
+above can be signed. This allows checkmedia to ensure the media integrity by
+also verifying this signature.
+
+For this, a tag 'signature' is added pointing to a 2 kiB block to be used
+for the gpg signature of the 512 bytes application_data block. The tag is
+automatically added during digest calculation (`tagmedia --digest`). But you need to
+add the actual signature later.
+
+To create signed media, use `tagmedia --export-tags foo` to export the tag
+block to file `foo`. Then create a detached signature with gpg (`foo.asc`)
+and add the signature to the medium with `tagmedia --import-signature foo.asc`.
+
+For the verification, the public keys in `/usr/lib/rpm/gnupg/keys` are used. Or
+specify the public gpg key to use with the `--key-file` option to checkmedia.
+
 ## Examples
+
+Calulate sha256 digest and store in `foo.iso`. Assume 150 sectors (of 2 kiB) padding in iso image:
 
 ```sh
 tagmedia --digest sha256 --pad 150 foo.iso
 ```
 
-Calulate sha256 digest and store in `foo.iso`. Assume 150 sectors (of 2 kB) padding in iso image.
+Verify signed Tumbleweed iso, with output:
 
 ```sh
-checkmedia foo.iso
+checkmedia openSUSE-Tumbleweed-NET-x86_64-Snapshot20190708-Media.iso
+        app: openSUSE-Tumbleweed-NET-x86_64-Build1406.1-Media
+   iso size: 132056 kB
+        pad: 300 kB
+  partition: start 4038 kB, size 128058 kB
+   checking: 100%
+     result: iso sha256 ok, partition sha256 ok
+     sha256: 62b15f25b231f22ee93d576a6c9527ff7209ff715628a43b265fd61837f412e4
+  signature: ok
 ```
 
-Verify `foo.iso`.
+Verify `foo.iso` and show more detailed information, including the actual gpg output from
+signature verification:
 
 ```sh
 checkmedia --verbose foo.iso
 ```
-
-Verify `foo.iso` and show more detailed information.
 
 
 ## Downloads

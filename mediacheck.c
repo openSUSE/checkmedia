@@ -44,6 +44,9 @@
 // application specific data length
 #define ISO9660_APP_DATA_LENGTH	0x200
 
+// signature block starts with this string
+#define SIGNATURE_MAGIC "7984fc91-a43f-4e45-bf27-6d3aa08b24cf"
+
 #define MAX_DIGEST_SIZE SHA512_DIGEST_SIZE
 
 typedef enum {
@@ -80,6 +83,11 @@ typedef struct {
 
 #include "mediacheck.h"
 
+// corresponds to sign_state_t
+static char *sign_states[] = {
+  "not signed", "not checked", "ok", "bad", "bad (no matching key)"
+};
+
 static void digest_ctx_init(mediacheck_digest_t *digest);
 static void digest_finish(mediacheck_digest_t *digest);
 static void digest_data_to_hex(mediacheck_digest_t *digest);
@@ -88,7 +96,9 @@ static int sanitize_data(char *data, int length);
 static char *no_extra_spaces(char *str);
 static void update_progress(mediacheck_t *media, unsigned blocks);
 static void process_chunk(mediacheck_digest_t *digest, chunk_region_t *region, unsigned chunk, unsigned chunk_blocks, unsigned char *buffer);
-
+static void normalize_chunk(mediacheck_t *media, unsigned chunk, unsigned chunk_blocks, unsigned char *buffer);
+static void set_signature_state(mediacheck_t *media, sign_state_t state);
+extern void verify_signature(mediacheck_t *media);
 
 /*
  * Read image file and gather info about it.
@@ -104,6 +114,8 @@ API_SYM mediacheck_t * mediacheck_init(char *file_name, mediacheck_progress_t pr
   media->last_percent = -1;
   media->file_name = file_name;
   media->progress = progress;
+
+  set_signature_state(media, sig_not_signed);
 
   get_info(media);
 
@@ -130,7 +142,29 @@ API_SYM void mediacheck_done(mediacheck_t *media)
   mediacheck_digest_done(media->digest.part);
   mediacheck_digest_done(media->digest.full);
 
+  free(media->signature.gpg_keys_log);
+  free(media->signature.gpg_sign_log);
+  free(media->signature.key_file);
+
   free(media);
+}
+
+
+/*
+ * Set a specific public key to use for signature checking.
+ *
+ * If nothing is set, all keys from /usr/lib/rpm/gnupg/keys/ are used.
+ */
+API_SYM void mediacheck_set_public_key(mediacheck_t *media, char *key_file)
+{
+  if(!media) return;
+
+  free(media->signature.key_file);
+  media->signature.key_file = NULL;
+
+  if(key_file) {
+    media->signature.key_file = strdup(key_file);
+  }
 }
 
 
@@ -138,10 +172,6 @@ API_SYM void mediacheck_done(mediacheck_t *media)
  * Calculate digest over image.
  *
  * Call mediacheck_init() before doing this.
- *
- * Normal digest, except that we assume
- *   - 0x0000 - 0x01ff (mbr) is filled with zeros (0)
- *   - 0x8373 - 0x8572 (iso9660 app data) is filled with spaces (' ').
  */
 API_SYM void mediacheck_calculate_digest(mediacheck_t *media)
 {
@@ -187,12 +217,7 @@ API_SYM void mediacheck_calculate_digest(mediacheck_t *media)
      */
     process_chunk(media->digest.full, &full_region, chunk, chunk_blocks, buffer);
 
-    if(chunk == 0) {
-      // mbr
-      memset(buffer, 0, 0x200);
-      // app data block
-      memset(buffer + ISO9660_APP_DATA_START, ' ', ISO9660_APP_DATA_LENGTH);
-    }
+    normalize_chunk(media, chunk, chunk_blocks, buffer);
 
     process_chunk(media->digest.iso, &iso_region, chunk, chunk_blocks, buffer);
     process_chunk(media->digest.part, &part_region, chunk, chunk_blocks, buffer);
@@ -218,6 +243,8 @@ API_SYM void mediacheck_calculate_digest(mediacheck_t *media)
   }
 
   close(fd);
+
+  verify_signature(media);
 }
 
 
@@ -598,12 +625,15 @@ void get_info(mediacheck_t *media)
     read(fd, media->app_data, sizeof media->app_data - 1) == sizeof media->app_data - 1
   ) {
     media->app_data[sizeof media->app_data - 1] = 0;
+    memcpy(media->signature.blob, media->app_data, sizeof media->signature.blob);
     if(sanitize_data(media->app_data, sizeof media->app_data - 1)) ok++;
   }
 
-  close(fd);
+  if(ok != 2) {
+    close(fd);
 
-  if(ok != 2) return;
+    return;
+  }
 
   media->err = 0;
 
@@ -655,6 +685,24 @@ void get_info(mediacheck_t *media)
         media->pad_blocks = strtoul(value, NULL, 0) << 2;
       }
     }
+    else if(!strcasecmp(key, "signature")) {
+      if(value && isdigit(*value)) {
+        media->signature.start = strtoul(value, NULL, 0);
+
+        if(
+          media->signature.start &&
+          lseek(fd, media->signature.start * 0x200, SEEK_SET) == media->signature.start * 0x200 &&
+          read(fd, media->signature.magic, sizeof media->signature.magic) == sizeof media->signature.magic &&
+          read(fd, media->signature.data, sizeof media->signature.data) == sizeof media->signature.data &&
+          !memcmp(media->signature.magic, SIGNATURE_MAGIC, sizeof SIGNATURE_MAGIC - 1) &&
+          media->signature.data[0]
+        ) {
+          media->signature.magic[sizeof media->signature.magic - 1] = 0;
+          media->signature.data[sizeof media->signature.data - 1] = 0;
+          set_signature_state(media, sig_not_checked);
+        }
+      }
+    }
   }
 
   // if we didn't get the image size via stat() above, try other ways
@@ -662,6 +710,8 @@ void get_info(mediacheck_t *media)
     media->full_blocks = media->part_start + media->part_blocks;
     if(!media->full_blocks) media->full_blocks = media->iso_blocks;
   }
+
+  close(fd);
 }
 
 
@@ -768,4 +818,164 @@ void process_chunk(mediacheck_digest_t *digest, chunk_region_t *region, unsigned
   else {
     mediacheck_digest_process(digest, buffer, chunk_blocks << 9);
   }
+}
+
+
+/*
+ * Normalize (clear) some data in buffer.
+ *
+ * buffer size is chunk_blocks * 0x200 bytes
+ * buffer size is guaranteed to be >= 64 kiB
+ *
+ * Normalized data assumes
+ *   - 0x0000 - 0x01ff (mbr) is filled with zeros (0)
+ *   - 0x8373 - 0x8572 (iso9660 app data) is filled with spaces (' ').
+ *   - signature block (2 kiB) contains only magic id + zeros (0)
+ */
+void normalize_chunk(mediacheck_t *media, unsigned chunk, unsigned chunk_blocks, unsigned char *buffer)
+{
+  unsigned pos, ofs, u;
+
+  if(chunk == 0) {
+    // mbr
+    memset(buffer, 0, 0x200);
+    // app data block
+    memset(buffer + ISO9660_APP_DATA_START, ' ', ISO9660_APP_DATA_LENGTH);
+  }
+
+  if(!media->signature.start) return;
+
+  pos = chunk * chunk_blocks;
+
+  if(media->signature.start < pos || media->signature.start >= pos + chunk_blocks) return;
+
+  ofs = media->signature.start - pos;
+
+  for(u = 0; u < 4 && ofs + u < chunk_blocks; u++) {
+    if(u == 0) {
+      memset(buffer + ((u + ofs) << 9) + 0x40, 0, 0x200 - 0x40);
+    }
+    else {
+      memset(buffer + ((u + ofs) << 9), 0, 0x200);
+    }
+  }
+}
+
+
+/*
+ * Set signature state.
+ *
+ * Sets both signature.state & signature.state_str.
+ */
+void set_signature_state(mediacheck_t *media, sign_state_t state)
+{
+  media->signature.state.id = state;
+  if(state < sizeof sign_states / sizeof *sign_states) {
+    media->signature.state.str = sign_states[state];
+  }
+}
+
+
+/*
+ * Verify signature.
+ *
+ * Call mediacheck_init() before doing this.
+ *
+ * The is function imports all keys from /usr/lib/rpm/gnupg/keys into a
+ * temporary key ring and then runs gpg to verify the signature.
+ */
+void verify_signature(mediacheck_t *media)
+{
+  char tmp_dir[] = "/tmp/mediacheck.XXXXXX";
+  char *buf;
+  int cmd_err;
+  FILE *f;
+
+  if(!media->signature.start || media->signature.state.id == sig_not_signed) return;
+
+  if(!mkdtemp(tmp_dir)) return;
+
+  asprintf(&buf, "%s/foo", tmp_dir);
+
+  if((f = fopen(buf, "w"))) {
+    fwrite(media->signature.blob, 1, sizeof media->signature.blob, f);
+    fclose(f);
+  }
+
+  free(buf);
+
+  asprintf(&buf, "%s/foo.asc", tmp_dir);
+
+  if((f = fopen(buf, "w"))) {
+    fprintf(f, "%s", media->signature.data);
+    fclose(f);
+  }
+
+  free(buf);
+
+  asprintf(&buf,
+    "/usr/bin/gpg --batch --homedir %s --no-default-keyring --ignore-time-conflict --ignore-valid-from "
+    "--keyring %s/sign.gpg --import %s >%s/gpg_keys.log 2>&1",
+    tmp_dir,
+    tmp_dir,
+    media->signature.key_file ?: "/usr/lib/rpm/gnupg/keys/*",
+    tmp_dir
+  );
+
+  cmd_err = WEXITSTATUS(system(buf));
+
+  free(buf);
+
+  asprintf(&buf, "%s/gpg_keys.log", tmp_dir);
+
+  if((f = fopen(buf, "r"))) {
+    char txt[4096] = {};	// just big enough
+    fread(txt, 1, sizeof txt - 1, f);
+    fclose(f);
+    free(media->signature.gpg_keys_log);
+    asprintf(&media->signature.gpg_keys_log, "%sgpg: exit code: %d\n", txt, cmd_err);
+  }
+
+  free(buf);
+
+  if(!cmd_err) {
+    asprintf(&buf,
+      "/usr/bin/gpg --batch --homedir %s --no-default-keyring --ignore-time-conflict --ignore-valid-from "
+      "--keyring %s/sign.gpg --verify %s/foo.asc %s/foo >%s/gpg_sign.log 2>&1",
+      tmp_dir, tmp_dir, tmp_dir, tmp_dir, tmp_dir
+    );
+
+    cmd_err = WEXITSTATUS(system(buf));
+
+    free(buf);
+
+    asprintf(&buf, "%s/gpg_sign.log", tmp_dir);
+
+    if((f = fopen(buf, "r"))) {
+      char txt[4096] = {};	// just big enough
+      fread(txt, 1, sizeof txt - 1, f);
+      fclose(f);
+      free(media->signature.gpg_sign_log);
+      asprintf(&media->signature.gpg_sign_log, "%sgpg: exit code: %d\n", txt, cmd_err);
+    }
+
+    free(buf);
+
+    set_signature_state(media, sig_bad);
+
+    if(media->signature.gpg_sign_log) {
+      if(strstr(media->signature.gpg_sign_log, "gpg: Good signature ")) {
+        set_signature_state(media, sig_ok);
+      }
+      if(strstr(media->signature.gpg_sign_log, "gpg: Can't check signature: No public key")) {
+        set_signature_state(media, sig_bad_no_key);
+      }
+    }
+  }
+
+  asprintf(&buf, "/usr/bin/rm -r %s", tmp_dir);
+
+  system(buf);
+
+  free(buf);
 }
