@@ -32,6 +32,19 @@ typedef struct {
   } digest;
 
   struct {
+    char *key, *value;
+  } tags[16];					/* up to 16 key - value pairs */
+
+  unsigned abort:1;				/* check aborted */
+  unsigned err:1;				/* read error */
+  unsigned err_block;				/* read error position (in 0.5 kB units) */
+
+  char app_id[ISO9660_APP_ID_LENGTH + 1];	/* application id */
+  char app_data[ISO9660_APP_DATA_LENGTH + 1];	/* app specific data */
+
+  int last_percent;				/* last percentage shown by progress function */
+
+  struct {
     unsigned start;				/* start block of signature (if any), in 0.5 kB units */
     struct {					/* signature state */
       sign_state_t id;				/* ... numerical */
@@ -44,19 +57,6 @@ typedef struct {
     char *gpg_sign_log;				/* gpg output from signature check */
     char *key_file;				/* gpg public key to use for signature check */
   } signature;
-
-  struct {
-    char *key, *value;
-  } tags[16];					/* up to 16 key - value pairs */
-
-  unsigned abort:1;				/* check aborted */
-  unsigned err:1;				/* read error */
-  unsigned err_block;				/* read error position (in 0.5 kB units) */
-
-  char app_id[ISO9660_APP_ID_LENGTH + 1];	/* application id */
-  char app_data[ISO9660_APP_DATA_LENGTH + 1];	/* app specific data */
-
-  int last_percent;				/* last percentage shown by progress function */
 } mediacheck_t;
 
 
