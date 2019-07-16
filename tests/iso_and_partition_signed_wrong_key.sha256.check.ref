@@ -1,0 +1,8 @@
+        app: iso_and_partition_signed_wrong_key
+   iso size: 450 kB
+        pad: 50 kB
+  partition: start 50 kB, size 450 kB
+   checking:       0% 12% 25% 38% 51% 64% 76% 89%100%
+     result: iso sha256 ok, partition sha256 ok
+     sha256: *
+  signature: bad (no matching key)
