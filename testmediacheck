@@ -434,7 +434,11 @@ sub gpg_init
     close $p;
   }
 
-  system "gpg --homedir=$gpg_dir --import $gpg_dir/test.pub >/dev/null 2>&1";
+  # older gpg versions use the secret key file here
+  my $key = "$gpg_dir/test.sec";
+  $key = "$gpg_dir/test.pub" unless -f $key;
+
+  system "gpg --homedir=$gpg_dir --import $key >/dev/null 2>&1";
 
   return $gpg_dir;
 }
