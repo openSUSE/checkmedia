@@ -62,7 +62,7 @@ typedef union {
   struct sha512_ctx sha512;
 } digest_ctx_t;
 
-typedef struct mediacheck_digest_s {
+struct mediacheck_digest_s {
   digest_type_t type;				/* digest type */
   char *name;					/* digest name */
   int size;					/* (binary) digest size, not bigger than MAX_DIGEST_SIZE */
@@ -75,7 +75,7 @@ typedef struct mediacheck_digest_s {
   char hex[MAX_DIGEST_SIZE*2 + 1];		/* hex digest */
   unsigned char ref[MAX_DIGEST_SIZE];		/* expected binary digest */
   char hex_ref[MAX_DIGEST_SIZE*2 + 1];		/* expected hex digest */
-} mediacheck_digest_t;
+};
 
 typedef struct {
   unsigned start, blocks;
