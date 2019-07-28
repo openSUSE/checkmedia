@@ -2,7 +2,7 @@
 
 ## About
 
-`libmediacheck` is a library for verifying SUSE installaton media. It is used by [checkmedia](README.md) and
+`libmediacheck` is a library for verifying SUSE installation media. It is used by [checkmedia](README.md) and
 [linuxrc](https://github.com/openSUSE/linuxrc).
 
 The library exports two groups of functions:
@@ -147,7 +147,7 @@ char *mediacheck_digest_hex(mediacheck_digest_t *digest);
 
 Never returns NULL but possibly "" (empty string) if there's no valid digest.
 
-Note: this implicitly finishes the digest calulation (you can no longer call
+Note: this implicitly finishes the digest calculation (you can no longer call
 `mediacheck_digest_process` on `digest`).
 
 ### Reference digest (the expected value) as hex string
