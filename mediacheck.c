@@ -708,7 +708,7 @@ void get_info(mediacheck_t *media)
   // if we didn't get the image size via stat() above, try other ways
   if(!media->full_blocks) {
     media->full_blocks = media->part_start + media->part_blocks;
-    if(!media->full_blocks) media->full_blocks = media->iso_blocks;
+    if(media->iso_blocks > media->full_blocks) media->full_blocks = media->iso_blocks;
   }
 
   close(fd);
