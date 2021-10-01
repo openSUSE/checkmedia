@@ -2,12 +2,13 @@
        tags: key = "sha1sum", value = "70550a259ba07c61455d3871dec325201cf0970b"
        tags: key = "partition", value = "101,900,f0ce48e9df03dbed3da06c22996f19ab2f4db3e7"
         app: iso_and_partition_odd_sizes
-   iso size: 500 kB
-        pad: 50 kB
-  partition: start 50.5 kB, size 450 kB
-  full size: 500.5 kB
+   iso size: 500 kiB
+        pad: 50 kiB
+  partition: start 50.5 kiB, size 450 kiB
+  full size: 500.5 kiB
     iso ref: 70550a259ba07c61455d3871dec325201cf0970b
    part ref: f0ce48e9df03dbed3da06c22996f19ab2f4db3e7
+      style: suse
    checking:       0% 12% 25% 38% 51% 63% 76% 89%100%
      result: iso sha1 ok, partition sha1 ok
  iso   sha1: 70550a259ba07c61455d3871dec325201cf0970b

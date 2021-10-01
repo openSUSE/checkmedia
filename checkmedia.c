@@ -7,7 +7,7 @@ void help(void);
 int progress(unsigned percent);
 
 struct {
-  unsigned verbose:1;
+  unsigned verbose;
   unsigned help:1;
   unsigned version:1;
   char *file_name;
@@ -41,7 +41,7 @@ int main(int argc, char **argv)
         break;
 
       case 'v':
-        opt.verbose = 1;
+        opt.verbose++;
         break;
 
       default:
@@ -68,7 +68,7 @@ int main(int argc, char **argv)
 
   if(opt.key_file) mediacheck_set_public_key(media, opt.key_file);
 
-  if(opt.verbose) {
+  if(opt.verbose >= 2) {
     for(i = 0; i < sizeof media->tags / sizeof *media->tags; i++) {
       if(!media->tags[i].key) break;
       printf("       tags: key = \"%s\", value = \"%s\"\n", media->tags[i].key, media->tags[i].value);
@@ -93,17 +93,18 @@ int main(int argc, char **argv)
   if(media->app_id) printf("        app: %s\n", media->app_id);
   if(media->iso_blocks) {
     printf(
-      "   iso size: %u%s kB\n",
+      "   iso size: %u%s kiB\n",
       media->iso_blocks >> 1,
       (media->iso_blocks & 1) ? ".5" : ""
     );
 
-    if(media->pad_blocks) printf("        pad: %u kB\n", media->pad_blocks >> 1);
+    if(media->skip_blocks) printf("       skip: %u kiB\n", media->skip_blocks >> 1);
+    if(media->pad_blocks) printf("        pad: %u kiB\n", media->pad_blocks >> 1);
   }
 
   if(media->part_blocks) {
     printf(
-      "  partition: start %u%s kB, size %u%s kB\n",
+      "  partition: start %u%s kiB, size %u%s kiB\n",
       media->part_start >> 1,
       (media->part_start & 1) ? ".5" : "",
       media->part_blocks >> 1,
@@ -111,10 +112,10 @@ int main(int argc, char **argv)
     );
   }
 
-  if(opt.verbose) {
+  if(opt.verbose >= 1) {
     if(media->full_blocks) {
       printf(
-        "  full size: %u%s kB\n",
+        "  full size: %u%s kiB\n",
         media->full_blocks >> 1,
         (media->full_blocks & 1) ? ".5" : ""
       );
@@ -131,6 +132,13 @@ int main(int argc, char **argv)
     if(mediacheck_digest_valid(media->digest.part)) {
       printf("   part ref: %s\n", mediacheck_digest_hex_ref(media->digest.part));
     }
+
+    if(media->fragment.count) {
+      printf("  fragments: %d\n", media->fragment.count);
+      printf("fragsum ref: %s\n", media->fragment.sums_ref);
+    }
+
+    printf("      style: %s\n", media->style == style_rh ? "rh" : "suse");
   }
 
   printf("   checking:     ");
@@ -160,9 +168,17 @@ int main(int argc, char **argv)
       mediacheck_digest_ok(media->digest.part) ? "ok" : "wrong"
     );
   }
+  if(media->fragment.count && mediacheck_digest_valid(media->digest.frag)) {
+    if(comma_needed) printf(", ");
+    printf(
+      "fragments %s %s",
+      mediacheck_digest_name(media->digest.frag),
+      mediacheck_digest_ok(media->digest.frag) ? "ok" : "wrong"
+    );
+  }
   printf("\n");
 
-  if(opt.verbose) {
+  if(opt.verbose >= 1) {
     if(mediacheck_digest_valid(media->digest.iso)) {
       printf(" iso %6s: %s\n", mediacheck_digest_name(media->digest.iso), mediacheck_digest_hex(media->digest.iso));
     }
@@ -170,13 +186,17 @@ int main(int argc, char **argv)
     if(mediacheck_digest_valid(media->digest.part)) {
       printf("part %6s: %s\n", mediacheck_digest_name(media->digest.part), mediacheck_digest_hex(media->digest.part));
     }
+
+    if(media->fragment.count) {
+      printf("frag %6s: %s\n", mediacheck_digest_name(media->digest.iso), media->fragment.sums);
+    }
   }
 
   if(mediacheck_digest_valid(media->digest.full)) {
     printf("%11s: %s\n", mediacheck_digest_name(media->digest.full), mediacheck_digest_hex(media->digest.full));
   }
 
-  if(opt.verbose) {
+  if(opt.verbose >= 2) {
     if(media->signature.gpg_keys_log) {
       printf("# -- gpg key import log\n%s", media->signature.gpg_keys_log);
     }
@@ -190,7 +210,13 @@ int main(int argc, char **argv)
 
   printf("  signature: %s\n", media->signature.state.str);
 
-  int result = mediacheck_digest_ok(media->digest.iso) || mediacheck_digest_ok(media->digest.part) ? 0 : 1;
+  if(media->signature.state.id == sig_ok && media->signature.signed_by) {
+    printf("  signed by: %s\n", media->signature.signed_by);
+  }
+
+  int result = mediacheck_digest_ok(media->digest.iso) || mediacheck_digest_ok(media->digest.part) || mediacheck_digest_ok(media->digest.frag) ? 0 : 1;
+
+  if(media->signature.state.id == sig_bad) result = 1;
 
   mediacheck_done(media);
 
@@ -206,12 +232,12 @@ void help()
   printf(
     "Usage: checkmedia [OPTIONS] FILE\n"
     "\n"
-    "Check SUSE installation media.\n"
+    "Check installation media.\n"
    "\n"
     "Options:\n"
     "      --key-file FILE   Use public key in FILE for signature check.\n"
     "      --version         Show checkmedia version.\n"
-    "  -v, --verbose         Show more detailed info.\n"
+    "  -v, --verbose         Show more detailed info (repeat for more).\n"
     "  -h, --help            Show this text.\n"
     "\n"
     "Usually checksums both over the whole ISO image and the installation\n"

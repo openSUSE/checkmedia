@@ -1,0 +1,520 @@
+# Installation media integrity checking
+:toc: preamble
+:toclevels: 3
+
+--
+To verify the correctness of downloaded ISO images you would usually
+calculate and compare some checksum (digest), for example SHA256, to a
+reference value obtained from some website.
+
+To make this process easier, the digest can be embedded into the ISO itself.
+
+While this guards against transmission errors it won't prevent anyone from
+manipulating the ISO. To ensure authenticity of the ISO image, the embedded
+meta data can be signed.
+--
+
+## About
+
+`checkmedia` is a tool to verify installation media. Its counterpart
+`tagmedia` creates and embeds the necessary meta data into the ISO image.
+
+The checking functionality is also provided as shared library `libmediacheck.so`.
+
+The tool set supports openSUSE / SLE ('SUSE') and Fedora / RHEL ('RH') - including their derivatives - media.
+
+The digest data `tagmedia` creates for RH media is compatible with the `implantisomd5` / `checkisomd5` tool set.
+
+## Downloads
+
+Packages for openSUSE and SLES are built at the https://build.opensuse.org[openSUSE Build Service]. You can grab
+
+- https://software.opensuse.org/package/checkmedia[official releases] or
+
+- https://software.opensuse.org/download/package?project=home:snwint:ports&package=checkmedia[latest stable versions]
+  from my https://build.opensuse.org/package/show/home:snwint:ports/checkmedia[ports] project
+
+## Technical specification
+
+The digest data is stored in the application specific data in the primary
+volume descriptor of the ISO. This an area of 512 bytes that are reserved by
+the https://wiki.osdev.org/ISO_9660[ISO9660 standard] to be used as
+applications see fit. The area starts at offset 0x8373 of the ISO9660 file
+system and is usually filled with spaces.
+
+The data is structured roughly as `key = value` pairs, separated by semicolons (`;`).
+
+Here are some examples:
+
+- openSUSE
++
+--
+[source]
+----
+# tagmedia --show openSUSE-Tumbleweed-DVD-x86_64-Snapshot20210823-Media.iso
+check = 1
+pad = 150
+sha256sum = a722af5e8ff16b07bc38c0971a79f8581016e0d39d3ccc520ac02f6a81f08158
+partition = 10432,9135936,c31a435ff7bef3ef3f27575985084060a493227684bd335934d8ca94c85f0a71
+signature = 20864
+----
+
+and the corresponding raw data
+
+[source]
+----
+# tagmedia --export-tags - openSUSE-Tumbleweed-DVD-x86_64-Snapshot20210823-Media.iso
+check=1;pad=150;sha256sum=a722af5e8ff16b07bc38c0971a79f8581016e0d39d3ccc520ac02f6a81f08158;partition=10432,9135936,c31a435ff7bef3ef3f27575985084060a493227684bd335934d8ca94c85f0a71;signature=20864
+
+----
+--
+
+- Fedora
++
+--
+[source]
+----
+# tagmedia --show Fedora-Server-dvd-x86_64-34-1.2.iso
+ISO MD5SUM = 8e80cc6b4a27cf1f76c8f9e665eb22d5
+SKIPSECTORS = 15
+RHLISOSTATUS = 1
+FRAGMENT SUMS = 1c62fb9659fa3637af7088c71c537657e323935cf12d22de58432182cb58
+FRAGMENT COUNT = 20
+THIS IS NOT THE SAME AS RUNNING MD5SUM ON THIS ISO!!
+----
+
+and the corresponding raw data
+
+[source]
+----
+# tagmedia --export-tags - Fedora-Server-dvd-x86_64-34-1.2.iso
+ISO MD5SUM = 8e80cc6b4a27cf1f76c8f9e665eb22d5;SKIPSECTORS = 15;RHLISOSTATUS=1;FRAGMENT SUMS = 1c62fb9659fa3637af7088c71c537657e323935cf12d22de58432182cb58;FRAGMENT COUNT = 20;THIS IS NOT THE SAME AS RUNNING MD5SUM ON THIS ISO!!
+
+----
+--
+
+*Notes*
+
+* SUSE
+  **  uses lower-case keys with no spaces around the equal sign (`=`)
+  ** supported digests are  MD5, SHA1, SHA224, SHA256, SHA384, and SHA512
+  ** at least the `<digest>sum` key must be present
+
+* RH
+  ** uses upper-case, with a single space around the equal sign - *except*
+  for `RHLISOSTATUS` which must not have spaces around the equal sign
+  ** the only supported digest is MD5
+  ** at least the `ISO MD5SUM`, `SKIPSECTORS`, `FRAGMENT SUMS`, and `FRAGMENT COUNT` keys must be present
+
+* for `checkmedia`, case does not matter and there can be any number of spaces
+  around the equal sign
+
+* for `checkisomd5`, case *does* matter and also the acceptable number of spaces is fixed
+
+### Digest calculation
+
+The digest is calculated over the whole ISO image with some exceptions:
+
+* 0x8373-0x8572 (application specific area) is replaced with an empty application specific area (all spaces)
+
+* SUSE only
+  ** 0x0000 - 0x01ff (MBR) is replaced by an area with all zeros; this is done to avoid problems with isohybrid images
+  ** if the `pad` key is set, `pad` 2 kiB blocks at the end of the ISO are
+     replaced with all zeros
+  ** if a signature is present, the 2 kiB block containing the signature is
+      replaced with an empty signature block (magic string + all zeros)
+
+* RH only
+  ** `SKIPSECTORS` 2 kiB blocks at the end of the ISO are skipped
+
+In addition to the digest over the whole ISO, SUSE can optionally store a
+digest over a partition (usually the partition containing the installer).
+This is useful for checking the medium after copying the image to an USB disk.
+
+The format of the `partition` entry is
+`partition=<startblock>,<blocks>,<digest>` - with a block size of 0.5 kiB.
+`<digest>` is the same digest type as used for the `<digest>sum` entry.
+
+RH stores also a 'progressive' digest in the `FRAGMENT SUMS` key. For this,
+the image is partitioned into `FRAGMENT COUNT` roughly equidistant
+fragments and a 'mini digest' is checked for each fragment. This allows to
+detect errors early without completing the check of the entire ISO.
+
+The exact algorithm is a bit tricky and is detailed separately below.
+
+Note that the digest over the entire ISO has to be checked in addition since
+the end of the last fragment does not coincide with the image end.
+
+#### Fragment digest calculation
+
+This section describes how to calculate the digest stored in the `FRAGMENT SUMS` field.
+
+- `FRAGMENT SUMS` has a fixed length of 60 chars
+- `FRAGMENT COUNT` is the number of fragments; the number of fragments must be an integral divisor of 60; for RH, it must be >= 4 (see below)
+- `FRAGMENT SUMS` is made up of `FRAGMENT COUNT` parts (from left to right) with a length of 60 / `FRAGMENT COUNT` each
+- calculate (all integer arithmetic, block size is 2 kiB):
++
+[source]
+----
+FRAGMENT_SUM_SIZE = 60 / FRAGMENT_COUNT
+TOTAL_BYTES = (ISO_BLOCKS - SKIP_SECTORS) << 11
+FRAGMENT = TOTAL_BYTES / (FRAGMENT_COUNT + 1)
+FRAGMENT_BLOCKS(N) = ((N * FRAGMENT & -0x8000) + 0x8000) >> 11;
+----
+- the N-th fragment starts at block 0 and has a length of FRAGMENT_BLOCKS(N)
+- N runs from 1 to `FRAGMENT COUNT`
+- for each fragment calculate the digest, taking into account the specifics described above
+- convert each of the leading FRAGMENT_SUM_SIZE bytes of the binary digest
+  to a single hex digit by choosing the leading char of the hexadecimal
+  representation of the byte; think of `sprintf("%x", digest[i])[0]`
+- `FRAGMENT_SUM_SIZE` should not be larger than the size of the digest used - else there's not enough
+   data and `FRAGMENT SUMS` will be shorter than 60; this means `FRAGMENT COUNT` should be at least 4
+   (resulting in a `FRAGMENT_SUM_SIZE` of 15) when MD5 (which has a size of 16 bytes) is used
+
+*Notes*
+
+- the implementation of all this looks much simpler; it will just read 32 kiB
+  blobs and finalize the digest whenever it crosses into a new fragment
+- the original implementation does the digest calculation *before* checking
+  the fragment boundary - hence the `+ 0x8000` in the formalized description
+  above as the 32 kiB buffer has already been added at this point
+
+Here's an example using the Fedora image from above (0.5 kiB blocks):
+
+[source]
+----
+# tagmedia --digest md5 -v -v Fedora-Server-dvd-x86_64-34-1.2.iso
+iso blocks = 4102876
+detected rh style
+full blocks = 4102816, fragment bytes = 100030561
+fragment  1, blocks   195456: md5 1c0c6a5ac5b34ea8df3a552b9c3bf1ef - 1c6
+fragment  2, blocks   390848: md5 2df6bd74166e100c5391e0bed3347672 - 2fb
+fragment  3, blocks   586240: md5 9466514b11c38db8b06866ec8e0d8ac8 - 965
+fragment  4, blocks   781568: md5 97fbaf84ef507cd6a5252fc7a6786265 - 9fa
+fragment  5, blocks   976960: md5 386b3236af93ba0dfb5cd0e5b91bb86a - 363
+fragment  6, blocks  1172352: md5 74a6f64e4d5ff6ba37339915ebc11b58 - 7af
+fragment  7, blocks  1367680: md5 75008cc3eebffc7a0ce27278ebaaf4a1 - 708
+fragment  8, blocks  1563072: md5 83c976c7f0c8a5f6a8ff692493d5b292 - 8c7
+fragment  9, blocks  1758464: md5 16cb57a24f96b40a71608a441820bbe7 - 1c5
+fragment 10, blocks  1953792: md5 3c076f8c23f6d87a643f9317354d91af - 376
+fragment 11, blocks  2149184: md5 5f7eee102db6ae4880053c24045b094f - 57e
+fragment 12, blocks  2344576: md5 3f22364d872f86976dbb19ee8cf2b94b - 323
+fragment 13, blocks  2539904: md5 9e305dfa6b282781d9817749874cdc3d - 935
+fragment 14, blocks  2735296: md5 cffa1252febd54126a7e30098e5865ce - cf1
+fragment 15, blocks  2930688: md5 26dc02a13d4c514241d1da19ab4abfc6 - 2d2
+fragment 16, blocks  3126080: md5 2bd8ef5f7887abd1f2a95da3b4b33d9e - 2de
+fragment 17, blocks  3321408: md5 5c8e46a88df449fd8536f0193ad10b59 - 584
+fragment 18, blocks  3516800: md5 03271070cbaf72cd7b14bbd2a095ad0a - 321
+fragment 19, blocks  3712192: md5 8729ca3dc084ef9702cd5ce2cf209f36 - 82c
+fragment 20, blocks  3907520: md5 b35789e21563f2336bbe8dbc315c855a - b58
+ISO MD5SUM = 8e80cc6b4a27cf1f76c8f9e665eb22d5
+SKIPSECTORS = 15
+RHLISOSTATUS = 0
+FRAGMENT SUMS = 1c62fb9659fa3637af7088c71c537657e323935cf12d22de58432182cb58
+FRAGMENT COUNT = 20
+THIS IS NOT THE SAME AS RUNNING MD5SUM ON THIS ISO!!
+----
+
+### Signatures
+
+If the meta data contains a `signature` (or `SIGNATURE`) key, the value is the starting block
+(in 0.5 kiB units) of a 2 kiB area that may contain signing data.
+
+This signature block starts with the magic string
+`7984fc91-a43f-4e45-bf27-6d3aa08b24cf` followed by 28 zero bytes. After that
+may follow an OpenPGP signature in ASCII armor. The signature is calculated
+over the 512 bytes of the application specific area.
+
+Here's an example using the Tumbleweed image from above:
+
+[source]
+----
+# tagmedia --export-signature - openSUSE-Tumbleweed-DVD-x86_64-Snapshot20210823-Media.iso
+-----BEGIN PGP SIGNATURE-----
+Version: GnuPG v1.0.7 (GNU/Linux)
+
+iQEVAwUAYSQahLiLL9Q9vcKEAQhNawgAoLq1PcxFDXPv7WkODxyxr/tatoSNOkQt
+RdnQNOc/0XFBq0gr3WYmyfHbH2tkirYC6egW/J6ro7AnW9XSkTBXHlgLyamYE8tH
+fluKi2xw5Qalv3YKD+6fFWvAF0BL9NSDAXvpRClH6tS9DWTVJ7c0W/sMFMlwwEtj
+3GAP7jRLRPqwaL7wKyDnoMb4+umTPqlDNqARh2XXwQ7lnahY5UNzQbmmMQ359Tqq
+4JTAueBakpdUoCY6BJt2H/HFUqVaVWa8JPetmfKKVI2HGUaiOzYav7JqVcQXgAQz
+WdzM7QJMJuIAr/q3zNlwWLus6xU8hUhzfsRDvkr+BoXAaFWwWpeIpg==
+=zvYC
+-----END PGP SIGNATURE-----
+----
+
+The raw signature block looks like this:
+
+[source]
+----
+# tagmedia --show openSUSE-Tumbleweed-DVD-x86_64-Snapshot20210823-Media.iso | grep -i signature
+signature = 20864
+# dd if=openSUSE-Tumbleweed-DVD-x86_64-Snapshot20210823-Media.iso bs=512 count=4 skip=20864 status=none | hexdump -C
+00000000  37 39 38 34 66 63 39 31  2d 61 34 33 66 2d 34 65  |7984fc91-a43f-4e|
+00000010  34 35 2d 62 66 32 37 2d  36 64 33 61 61 30 38 62  |45-bf27-6d3aa08b|
+00000020  32 34 63 66 0a 00 00 00  00 00 00 00 00 00 00 00  |24cf............|
+00000030  00 00 00 00 00 00 00 00  00 00 00 00 00 00 00 00  |................|
+00000040  2d 2d 2d 2d 2d 42 45 47  49 4e 20 50 47 50 20 53  |-----BEGIN PGP S|
+00000050  49 47 4e 41 54 55 52 45  2d 2d 2d 2d 2d 0a 56 65  |IGNATURE-----.Ve|
+00000060  72 73 69 6f 6e 3a 20 47  6e 75 50 47 20 76 31 2e  |rsion: GnuPG v1.|
+00000070  30 2e 37 20 28 47 4e 55  2f 4c 69 6e 75 78 29 0a  |0.7 (GNU/Linux).|
+00000080  0a 69 51 45 56 41 77 55  41 59 53 51 61 68 4c 69  |.iQEVAwUAYSQahLi|
+00000090  4c 4c 39 51 39 76 63 4b  45 41 51 68 4e 61 77 67  |LL9Q9vcKEAQhNawg|
+000000a0  41 6f 4c 71 31 50 63 78  46 44 58 50 76 37 57 6b  |AoLq1PcxFDXPv7Wk|
+000000b0  4f 44 78 79 78 72 2f 74  61 74 6f 53 4e 4f 6b 51  |ODxyxr/tatoSNOkQ|
+000000c0  74 0a 52 64 6e 51 4e 4f  63 2f 30 58 46 42 71 30  |t.RdnQNOc/0XFBq0|
+000000d0  67 72 33 57 59 6d 79 66  48 62 48 32 74 6b 69 72  |gr3WYmyfHbH2tkir|
+000000e0  59 43 36 65 67 57 2f 4a  36 72 6f 37 41 6e 57 39  |YC6egW/J6ro7AnW9|
+000000f0  58 53 6b 54 42 58 48 6c  67 4c 79 61 6d 59 45 38  |XSkTBXHlgLyamYE8|
+00000100  74 48 0a 66 6c 75 4b 69  32 78 77 35 51 61 6c 76  |tH.fluKi2xw5Qalv|
+00000110  33 59 4b 44 2b 36 66 46  57 76 41 46 30 42 4c 39  |3YKD+6fFWvAF0BL9|
+00000120  4e 53 44 41 58 76 70 52  43 6c 48 36 74 53 39 44  |NSDAXvpRClH6tS9D|
+00000130  57 54 56 4a 37 63 30 57  2f 73 4d 46 4d 6c 77 77  |WTVJ7c0W/sMFMlww|
+00000140  45 74 6a 0a 33 47 41 50  37 6a 52 4c 52 50 71 77  |Etj.3GAP7jRLRPqw|
+00000150  61 4c 37 77 4b 79 44 6e  6f 4d 62 34 2b 75 6d 54  |aL7wKyDnoMb4+umT|
+00000160  50 71 6c 44 4e 71 41 52  68 32 58 58 77 51 37 6c  |PqlDNqARh2XXwQ7l|
+00000170  6e 61 68 59 35 55 4e 7a  51 62 6d 6d 4d 51 33 35  |nahY5UNzQbmmMQ35|
+00000180  39 54 71 71 0a 34 4a 54  41 75 65 42 61 6b 70 64  |9Tqq.4JTAueBakpd|
+00000190  55 6f 43 59 36 42 4a 74  32 48 2f 48 46 55 71 56  |UoCY6BJt2H/HFUqV|
+000001a0  61 56 57 61 38 4a 50 65  74 6d 66 4b 4b 56 49 32  |aVWa8JPetmfKKVI2|
+000001b0  48 47 55 61 69 4f 7a 59  61 76 37 4a 71 56 63 51  |HGUaiOzYav7JqVcQ|
+000001c0  58 67 41 51 7a 0a 57 64  7a 4d 37 51 4a 4d 4a 75  |XgAQz.WdzM7QJMJu|
+000001d0  49 41 72 2f 71 33 7a 4e  6c 77 57 4c 75 73 36 78  |IAr/q3zNlwWLus6x|
+000001e0  55 38 68 55 68 7a 66 73  52 44 76 6b 72 2b 42 6f  |U8hUhzfsRDvkr+Bo|
+000001f0  58 41 61 46 57 77 57 70  65 49 70 67 3d 3d 0a 3d  |XAaFWwWpeIpg==.=|
+00000200  7a 76 59 43 0a 2d 2d 2d  2d 2d 45 4e 44 20 50 47  |zvYC.-----END PG|
+00000210  50 20 53 49 47 4e 41 54  55 52 45 2d 2d 2d 2d 2d  |P SIGNATURE-----|
+00000220  0a 00 00 00 00 00 00 00  00 00 00 00 00 00 00 00  |................|
+00000230  00 00 00 00 00 00 00 00  00 00 00 00 00 00 00 00  |................|
+*
+00000800
+----
+
+#### Verification
+
+The signature is verified using the  the public keys installed in `/usr/lib/rpm/gnupg/keys`.
+Alternatively, pass the public GPG key file to use with the `--key-file` option to `checkmedia`.
+
+### Extensions
+
+#### Adding a signature to RH media
+
+Although the standard RH tools (`implantisomd5` / `checkisomd5`) do not
+support signing the meta data, it is still possible to do it. `checkmedia`
+will verify it and `checkisomd5` will accept the image as well. So there is no conflict.
+
+The way to do it is to place the signature block in the skipped area.
+`tagmedia` will look at the first block in the skipped area when it searches
+for a signature block and add a `SIGNATURE` key (upper-case to align with
+the RH style) to the meta data in this case.
+
+#### Adding a fragment digest to SUSE media
+
+`tagmedia` allows to add a RH-style fragment digest also for SUSE media. The
+calculation uses the same digest that is used for the main ISO checksum and is not limited to MD5.
+
+## Usage examples
+
+### Checking media
+
+- SUSE
++
+[source]
+----
+# checkmedia openSUSE-Tumbleweed-DVD-x86_64-Snapshot20210823-Media.iso
+        app: openSUSE-Tumbleweed-DVD-x86_64-Build2850.3-Media
+   iso size: 4572572 kiB
+        pad: 300 kiB
+  partition: start 5216 kiB, size 4567968 kiB
+   checking: 100%
+     result: iso sha256 ok, partition sha256 ok
+     sha256: 90b9fdd5f2332ed6728a6a67f8fe78c0b16af4369637bff0e661c507dd5d69eb
+  signature: ok
+  signed by: openSUSE Project Signing Key <opensuse@opensuse.org>
+----
+- RH
++
+[source]
+----
+# checkmedia Fedora-Server-dvd-x86_64-34-1.2.iso
+        app: Fedora-S-dvd-x86_64-34
+   iso size: 2051438 kiB
+       skip: 30 kiB
+   checking: 100%
+     result: iso md5 ok, fragments md5 ok
+        md5: b3c174a7cd4ef9095e46365acba41cbd
+  signature: not signed
+----
+
+Notes
+
+- the ISO in openSUSE example is signed and the signature was sucessfully verified
+- the ISO in the Fedora example has additionally a fragments checksum
+
+### Creating digest data
+
+- SUSE
++
+--
+Let's take the openSUSE image from above and change the digest to SHA1 and add a RH-like fragment sum:
+
+[source]
+----
+# tagmedia --clean --digest sha1 --pad 150 --fragments 20 openSUSE-Tumbleweed-DVD-x86_64-Snapshot20210823-Media.iso
+pad = 150
+sha1sum = 612df62c3c0c604ae8fe98197c17bff6c0af313e
+fragment sums = cda2f8ff1721a96b8a1b9725936784b45a13bfa5d86be8d33166b14c5374cec
+fragment count = 20
+partition = 10432,9135936,530bcfb94183501626347de64a67061e2c8ba005
+signature = 20864
+----
+
+Verifying the ISO now uses SHA1, but the signature is no longer valid:
+
+[source]
+----
+# checkmedia openSUSE-Tumbleweed-DVD-x86_64-Snapshot20210823-Media.iso
+        app: openSUSE-Tumbleweed-DVD-x86_64-Build2850.3-Media
+   iso size: 4572572 kiB
+        pad: 300 kiB
+  partition: start 5216 kiB, size 4567968 kiB
+   checking: 100%
+     result: iso sha1 ok, partition sha1 ok, fragments sha1 ok
+       sha1: aacd1518d496b938378c95f4ee81ea7d3f82b912
+  signature: bad
+----
+--
+- RH
++
+--
+`tagmedia` also works with the Fedora image; let's change the number of fragments:
+
+[source]
+----
+# tagmedia --clean --digest md5 --fragments 30 Fedora-Server-dvd-x86_64-34-1.2.iso
+RHLISOSTATUS = 0
+SKIPSECTORS = 15
+FRAGMENT SUMS = 769fd46965c792aa2d94e235e9121e4766539c7c532896bef5e2b379afa4
+FRAGMENT COUNT = 30
+ISO MD5SUM = 8e80cc6b4a27cf1f76c8f9e665eb22d5
+THIS IS NOT THE SAME AS RUNNING MD5SUM ON THIS ISO!!
+----
+
+Both `checkmedia` and `checkisomd5` like it:
+
+[source]
+----
+# checkmedia Fedora-Server-dvd-x86_64-34-1.2.iso
+        app: Fedora-S-dvd-x86_64-34
+   iso size: 2051438 kiB
+       skip: 30 kiB
+   checking: 100%
+     result: iso md5 ok, fragments md5 ok
+        md5: 41cba2ffaacf529e90429bcea4de380b
+  signature: not signed
+----
+
+[source]
+----
+# checkisomd5 --verbose Fedora-Server-dvd-x86_64-34-1.2.iso
+Fedora-Server-dvd-x86_64-34-1.2.iso:   8e80cc6b4a27cf1f76c8f9e665eb22d5
+Fragment sums: 769fd46965c792aa2d94e235e9121e4766539c7c532896bef5e2b379afa4
+Fragment count: 30
+Supported ISO: no
+Press [Esc] to abort check.
+Checking: 100.0%
+
+The media check is complete, the result is: PASS.
+
+It is OK to use this media.
+----
+--
+
+### Creating a signature
+
+Let's continue with the examples from the last section and sign the media with our own key.
+
+[source]
+----
+# tagmedia --create-signature Testkey openSUSE-Tumbleweed-DVD-x86_64-Snapshot20210823-Media.iso
+# checkmedia --key-file openSUSE-Tumbleweed-DVD-x86_64-Snapshot20210823-Media.iso.key openSUSE-Tumbleweed-DVD-x86_64-Snapshot20210823-Media.iso
+        app: openSUSE-Tumbleweed-DVD-x86_64-Build2850.3-Media
+   iso size: 4572572 kiB
+        pad: 300 kiB
+  partition: start 5216 kiB, size 4567968 kiB
+   checking: 100%
+     result: iso sha1 ok, partition sha1 ok, fragments sha1 ok
+       sha1: 49143cb1e1bd51b6d3d62e5fe0908b97027bfbbb
+  signature: ok
+  signed by: Testkey Signing Key
+----
+
+Note that `tagmedia` stored the matching public key part in `openSUSE-Tumbleweed-DVD-x86_64-Snapshot20210823-Media.iso.key`.
+
+This also works with the Fedora image:
+
+[source]
+----
+# tagmedia --create-signature Testkey Fedora-Server-dvd-x86_64-34-1.2.iso
+# tagmedia Fedora-Server-dvd-x86_64-34-1.2.iso
+RHLISOSTATUS = 0
+SKIPSECTORS = 15
+FRAGMENT SUMS = 769fd46965c792aa2d94e235e9121e4766539c7c532896bef5e2b379afa4
+FRAGMENT COUNT = 30
+ISO MD5SUM = 8e80cc6b4a27cf1f76c8f9e665eb22d5
+THIS IS NOT THE SAME AS RUNNING MD5SUM ON THIS ISO!!
+SIGNATURE = 4102816
+----
+
+You can see that `tagmedia` automatically found a place for the signature block and added a link to it to the meta data.
+
+[source]
+----
+# checkmedia --key-file Fedora-Server-dvd-x86_64-34-1.2.iso.key Fedora-Server-dvd-x86_64-34-1.2.iso
+        app: Fedora-S-dvd-x86_64-34
+   iso size: 2051438 kiB
+       skip: 30 kiB
+   checking: 100%
+     result: iso md5 ok, fragments md5 ok
+        md5: 5d945293a66a6fb8987dc8b077d5143f
+  signature: ok
+  signed by: Testkey Signing Key
+----
+
+`checkisomd5` also likes it:
+
+[source]
+----
+# checkisomd5 Fedora-Server-dvd-x86_64-34-1.2.iso
+Press [Esc] to abort check.
+
+The media check is complete, the result is: PASS.
+
+It is OK to use this media.
+----
+
+
+## openSUSE Development
+
+To build, simply run `make`. Install with `make install`.
+
+Basically every new commit into the master branch of the repository will be auto-submitted
+to all current SUSE products. No further action is needed except accepting the pull request.
+
+Submissions are managed by a SUSE internal https://jenkins.io[jenkins] node in the InstallTools tab.
+
+Each time a new commit is integrated into the master branch of the repository,
+a new submit request is created to the openSUSE Build Service. The devel project
+is https://build.opensuse.org/package/show/system:install:head/checkmedia[system:install:head].
+
+`*.changes` and version numbers are auto-generated from git commits, you don't have to worry about this.
+
+The spec file is maintained in the Build Service only. If you need to change it for the `master` branch,
+submit to the
+https://build.opensuse.org/package/show/system:install:head/checkmedia[devel project]
+in the build service directly.
+
+Development happens exclusively in the `master` branch. The branch is used for all current products.
+
+You can find more information about the changes auto-generation and the
+tools used for jenkis submissions in the https://github.com/openSUSE/linuxrc-devtools#opensuse-development[linuxrc-devtools documentation].

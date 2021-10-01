@@ -1,8 +1,9 @@
         app: iso_and_partition_signed_ok
-   iso size: 450 kB
-        pad: 50 kB
-  partition: start 50 kB, size 450 kB
+   iso size: 450 kiB
+        pad: 50 kiB
+  partition: start 50 kiB, size 450 kiB
    checking:       0% 12% 25% 38% 51% 64% 76% 89%100%
      result: iso sha256 ok, partition sha256 ok
      sha256: *
   signature: ok
+  signed by: test Signing Key (transient key)
