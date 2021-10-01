@@ -3,13 +3,14 @@
        tags: key = "partition", value = "100,900,0d16f5a21c763c3bf5a2f32d3fffd27811942e500ee95b8541443599ea6fd726"
        tags: key = "signature", value = "260"
         app: iso_and_partition_not_signed
-   iso size: 450 kB
-        pad: 50 kB
-  partition: start 50 kB, size 450 kB
-  full size: 500 kB
+   iso size: 450 kiB
+        pad: 50 kiB
+  partition: start 50 kiB, size 450 kiB
+  full size: 500 kiB
  sign block: 260
     iso ref: d7df919f9d008b94ee51dadd312c6a0bda2607de8bc6fe84d2869096795c8a26
    part ref: 0d16f5a21c763c3bf5a2f32d3fffd27811942e500ee95b8541443599ea6fd726
+      style: suse
    checking:       0% 12% 25% 38% 51% 64% 76% 89%100%
      result: iso sha256 ok, partition sha256 ok
  iso sha256: d7df919f9d008b94ee51dadd312c6a0bda2607de8bc6fe84d2869096795c8a26

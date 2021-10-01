@@ -2,12 +2,13 @@
        tags: key = "sha512sum", value = "0f2f8fe473b8a85cd0872ab81c5d8dae2d6a13fecff429b18dc6f4bc5678ece91f7d4dbed4cd55bfb777b6882d529508eb2d8c360d69e0e23d9f496159ee9892"
        tags: key = "partition", value = "100,900,9f9aa238d3c024e82b1b8ee900dc372498da42614e15a75a65605a786b108dad954758d8e47d6ecf217222541374433c3537ee578624915846c7893dc8f84f93"
         app: iso_and_partition_wrong_padding
-   iso size: 450 kB
-        pad: 100 kB
-  partition: start 50 kB, size 450 kB
-  full size: 500 kB
+   iso size: 450 kiB
+        pad: 100 kiB
+  partition: start 50 kiB, size 450 kiB
+  full size: 500 kiB
     iso ref: 0f2f8fe473b8a85cd0872ab81c5d8dae2d6a13fecff429b18dc6f4bc5678ece91f7d4dbed4cd55bfb777b6882d529508eb2d8c360d69e0e23d9f496159ee9892
    part ref: 9f9aa238d3c024e82b1b8ee900dc372498da42614e15a75a65605a786b108dad954758d8e47d6ecf217222541374433c3537ee578624915846c7893dc8f84f93
+      style: suse
    checking:       0% 12% 25% 38% 51% 64% 76% 89%100%
      result: iso sha512 wrong, partition sha512 ok
  iso sha512: 1e7d6d3200db253e6944cc00c7237390b6e7d0299843a8542b7068c084c4858ad047cca163b5a9b7520133372fbe7dc0cd12e85f5556398785a81d0b82c71cc7

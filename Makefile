@@ -47,7 +47,11 @@ test: checkmedia
 	./testmediacheck
 
 install: checkmedia
-	install -m 755 -D checkmedia tagmedia $(DESTDIR)/usr/bin
+	@cp tagmedia tagmedia.tmp
+	@perl -pi -e 's/0\.0/$(VERSION)/ if /VERSION = /' tagmedia.tmp
+	install -m 755 -D tagmedia.tmp $(DESTDIR)/usr/bin/tagmedia
+	@rm -f tagmedia.tmp
+	install -m 755 -D checkmedia $(DESTDIR)/usr/bin
 	install -D $(LIB_FILENAME) $(DESTDIR)$(LIBDIR)/$(LIB_FILENAME)
 	ln -snf $(LIB_FILENAME) $(DESTDIR)$(LIBDIR)/$(LIB_SONAME)
 	ln -snf $(LIB_SONAME) $(DESTDIR)$(LIBDIR)/$(LIB_NAME).so

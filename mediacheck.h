@@ -9,27 +9,42 @@ extern "C" {
 #define ISO9660_APP_ID_LENGTH	0x80
 #define ISO9660_APP_DATA_LENGTH	0x200
 
+//
+#define FRAGMENT_SUM_LENGTH	60
+
 typedef struct mediacheck_digest_s mediacheck_digest_t;
 
 typedef int (* mediacheck_progress_t)(unsigned percent);
 
 typedef enum { sig_not_signed, sig_not_checked, sig_ok, sig_bad, sig_bad_no_key } sign_state_t;
 
+typedef enum { style_suse = 1, style_rh } digest_style_t;
+
 typedef struct {
   char *file_name;				/* file to check */
   mediacheck_progress_t progress;		/* progress function */
 
-  unsigned full_blocks;				/* full image size, in 0.5 kB units */
-  unsigned iso_blocks;				/* iso size in 0.5 kB units */
-  unsigned pad_blocks;				/* padding size in 0.5 kB units */
-  unsigned part_start;				/* partition start, in 0.5 kB units */
-  unsigned part_blocks;				/* partition size, in 0.5 kB units */
+  unsigned full_blocks;				/* full image size, in 0.5 kiB units */
+  unsigned iso_blocks;				/* iso size in 0.5 kiB units */
+  unsigned pad_blocks;				/* padding size in 0.5 kiB units */
+  unsigned skip_blocks;				/* skip size in 0.5 kiB units */
+  unsigned part_start;				/* partition start, in 0.5 kiB units */
+  unsigned part_blocks;				/* partition size, in 0.5 kiB units */
+
+  digest_style_t style;				/* type of digest data */
 
   struct {
     mediacheck_digest_t *full;			/* full image digest, calculated */
     mediacheck_digest_t *iso;			/* iso digest, calculated */
     mediacheck_digest_t *part;			/* partition digest, calculated */
+    mediacheck_digest_t *frag;			/* last fragment digest, calculated */
   } digest;
+
+  struct {
+    unsigned count;				/* number of fragments */
+    char sums_ref[FRAGMENT_SUM_LENGTH + 1];	/* fragment checksums, reference value */
+    char sums[FRAGMENT_SUM_LENGTH + 1];		/* fragment checksums, calculated value */
+  } fragment;
 
   struct {
     char *key, *value;
@@ -37,7 +52,7 @@ typedef struct {
 
   unsigned abort:1;				/* check aborted */
   unsigned err:1;				/* read error */
-  unsigned err_block;				/* read error position (in 0.5 kB units) */
+  unsigned err_block;				/* read error position (in 0.5 kiB units) */
 
   char app_id[ISO9660_APP_ID_LENGTH + 1];	/* application id */
   char app_data[ISO9660_APP_DATA_LENGTH + 1];	/* app specific data */
@@ -45,7 +60,7 @@ typedef struct {
   int last_percent;				/* last percentage shown by progress function */
 
   struct {
-    unsigned start;				/* start block of signature (if any), in 0.5 kB units */
+    unsigned start;				/* start block of signature (if any), in 0.5 kiB units */
     struct {					/* signature state */
       sign_state_t id;				/* ... numerical */
       char *str;				/* ... as string (static, don't free) */
@@ -56,6 +71,7 @@ typedef struct {
     char *gpg_keys_log;				/* gpg output from key import */
     char *gpg_sign_log;				/* gpg output from signature check */
     char *key_file;				/* gpg public key to use for signature check */
+    char *signed_by;				/* signee, parsed from gpg output */
   } signature;
 } mediacheck_t;
 

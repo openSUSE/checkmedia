@@ -1,4 +1,5 @@
 #define _GNU_SOURCE
+#define _FILE_OFFSET_BITS 64
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -22,13 +23,13 @@
 /*
  * Here are some ISO9660 file system related constants.
  *
- * If in doubt about the ISO9660 layout, check http://alumnus.caltech.edu/~pje/iso9660.html
+ * If in doubt about the ISO9660 layout, check https://wiki.osdev.org/ISO_9660
  */
 // offset of volume descriptor
 // usually points to "\x01CD001\x01\x00"
 #define ISO9660_MAGIC_START	0x8000
 
-// offset of volume size (in 2 kB units)
+// offset of volume size (in 2 kiB units)
 // stored as 32 bit little-endian, followed by a 32 bit big-endian value
 #define ISO9660_VOLUME_SIZE	0x8050
 
@@ -37,6 +38,12 @@
 
 // application identifier length
 #define ISO9660_APP_ID_LENGTH	0x80
+
+// offset of volume identifier (some string)
+#define ISO9660_VOLUME_ID_START	0x8028
+
+// volume identifier length
+#define ISO9660_VOLUME_ID_LENGTH	0x20
 
 // offset of application specific data (anything goes)
 #define ISO9660_APP_DATA_START	0x8373
@@ -119,6 +126,16 @@ API_SYM mediacheck_t * mediacheck_init(char *file_name, mediacheck_progress_t pr
 
   get_info(media);
 
+  switch(media->style) {
+    case style_suse:
+      media->skip_blocks = 0;
+      break;
+
+    case style_rh:
+      media->pad_blocks = 0;
+      break;
+  }
+
   return media;
 }
 
@@ -141,10 +158,12 @@ API_SYM void mediacheck_done(mediacheck_t *media)
   mediacheck_digest_done(media->digest.iso);
   mediacheck_digest_done(media->digest.part);
   mediacheck_digest_done(media->digest.full);
+  mediacheck_digest_done(media->digest.frag);
 
   free(media->signature.gpg_keys_log);
   free(media->signature.gpg_sign_log);
   free(media->signature.key_file);
+  free(media->signature.signed_by);
 
   free(media);
 }
@@ -175,19 +194,25 @@ API_SYM void mediacheck_set_public_key(mediacheck_t *media, char *key_file)
  */
 API_SYM void mediacheck_calculate_digest(mediacheck_t *media)
 {
-  unsigned char buffer[64 << 10];	/* arbitrary, but at least 36 kB! */
+  unsigned char buffer[64 << 10];		/* arbitrary, but at least 32 kiB, and stick to powers of 2 */
   unsigned chunk_size = sizeof buffer;
+
+  /* fragment digest calculation requires a chunk size of 32 kiB */
+  if(media->fragment.count) chunk_size = 32 << 10;
+
   unsigned chunk_blocks = chunk_size >> 9;
   unsigned last_chunk, last_chunk_blocks;
   unsigned chunk;
   int fd;
 
   chunk_region_t full_region = { 0, media->full_blocks } ;
-  chunk_region_t iso_region = { 0, media->iso_blocks - media->pad_blocks } ;
+  chunk_region_t iso_region = { 0, media->iso_blocks - media->pad_blocks - media->skip_blocks } ;
   chunk_region_t part_region = { media->part_start, media->part_blocks } ;
 
   last_chunk = media->full_blocks / chunk_blocks;
   last_chunk_blocks = media->full_blocks % chunk_blocks;
+
+  uint64_t fragment_bytes = ((uint64_t) iso_region.blocks << 9) / (media->fragment.count + 1);
 
   if(!media || !media->file_name) return;
 
@@ -198,6 +223,9 @@ API_SYM void mediacheck_calculate_digest(mediacheck_t *media)
   media->digest.full = mediacheck_digest_init(
     media->digest.iso ? media->digest.iso->name : media->digest.part ? media->digest.part->name : NULL, NULL
   );
+
+  unsigned last_fragment = 0;
+  *media->fragment.sums = 0;;
 
   for(chunk = 0; !media->abort && chunk <= last_chunk; chunk++) {
     unsigned u, size = chunk_size;
@@ -223,12 +251,45 @@ API_SYM void mediacheck_calculate_digest(mediacheck_t *media)
     process_chunk(media->digest.part, &part_region, chunk, chunk_blocks, buffer);
 
     update_progress(media, (chunk + 1) * chunk_blocks);
+
+    if(media->fragment.count) {
+      unsigned fragment = ((uint64_t) chunk * chunk_size) / fragment_bytes;
+      if(fragment != last_fragment && fragment <= media->fragment.count) {
+        unsigned fragment_size = FRAGMENT_SUM_LENGTH / media->fragment.count;
+        if(!media->digest.frag) {
+          media->digest.frag = calloc(1, sizeof *media->digest.frag);
+        }
+        *media->digest.frag = *media->digest.iso;
+        digest_finish(media->digest.frag);
+
+        for(unsigned u = 0; u < fragment_size && u < media->digest.frag->size; u++) {
+          char buf[4];
+          sprintf(buf, "%x", media->digest.frag->data[u]);
+          strncat(media->fragment.sums, buf, 1);
+        }
+        if(memcmp(media->fragment.sums_ref, media->fragment.sums, strlen(media->fragment.sums))) {
+          media->digest.frag->ok = 0;
+
+          media->abort = 1;
+
+          // since we abort, the other digest calculations will not be completed
+          media->digest.iso->valid = 0;
+          media->digest.full->valid = 0;
+          if(media->digest.part) media->digest.part->valid = 0;
+        }
+        else {
+          media->digest.frag->ok = 1;
+        }
+
+        last_fragment = fragment;
+      }
+    }
   }
 
   if(!media->err && !media->abort) {
     unsigned u;
 
-    memset(buffer, 0, 1 << 9);		/* 0.5 kB */
+    memset(buffer, 0, 1 << 9);		/* 0.5 kiB */
     for(u = 0; u < media->pad_blocks; u++) {
       mediacheck_digest_process(media->digest.iso, buffer, 1 << 9);
     }
@@ -240,6 +301,7 @@ API_SYM void mediacheck_calculate_digest(mediacheck_t *media)
     if(media->digest.iso) media->digest.iso->valid = 0;
     if(media->digest.part) media->digest.part->valid = 0;
     if(media->digest.full) media->digest.full->valid = 0;
+    if(media->digest.frag) media->digest.frag->valid = 0;
   }
 
   close(fd);
@@ -609,6 +671,25 @@ void get_info(mediacheck_t *media)
       if(!strncmp(media->app_id, "GENISOIMAGE", sizeof "GENISOIMAGE" - 1)) *media->app_id = 0;
       if((s = strrchr(media->app_id, '#'))) *s = 0;
 
+      if(media->app_id[0]) ok++;
+    }
+  }
+
+  /* ensure media->app_id[] really is large enough to alternatively hold the volume id */
+  #if ISO9660_VOLUME_ID_LENGTH > ISO9660_APP_ID_LENGTH
+    #error "oops, media->app_id[] too small"
+  #endif
+
+  /*
+   * If application id is not set, go for volume id.
+   */
+  if(
+    !media->app_id[0] &&
+    lseek(fd, ISO9660_VOLUME_ID_START, SEEK_SET) == ISO9660_VOLUME_ID_START &&
+    read(fd, media->app_id, ISO9660_VOLUME_ID_LENGTH) == ISO9660_VOLUME_ID_LENGTH
+  ) {
+    media->app_id[ISO9660_VOLUME_ID_LENGTH] = 0;
+    if(sanitize_data(media->app_id, ISO9660_VOLUME_ID_LENGTH)) {
       ok++;
     }
   }
@@ -654,14 +735,20 @@ void get_info(mediacheck_t *media)
       tag_count++;
     }
 
+    char *digest_key = key;
+    if(!strncasecmp(digest_key, "iso ", sizeof "iso " - 1)) {
+      digest_key += sizeof "iso " - 1;
+    }
+
     if(
-      !strcasecmp(key, "md5sum") ||
-      !strcasecmp(key, "sha1sum") ||
-      !strcasecmp(key, "sha224sum") ||
-      !strcasecmp(key, "sha256sum") ||
-      !strcasecmp(key, "sha384sum") ||
-      !strcasecmp(key, "sha512sum")
+      !strcasecmp(digest_key, "md5sum") ||
+      !strcasecmp(digest_key, "sha1sum") ||
+      !strcasecmp(digest_key, "sha224sum") ||
+      !strcasecmp(digest_key, "sha256sum") ||
+      !strcasecmp(digest_key, "sha384sum") ||
+      !strcasecmp(digest_key, "sha512sum")
     ) {
+      media->style = digest_key == key ? style_suse : style_rh;
       if(media->iso_blocks) {
         media->digest.iso = mediacheck_digest_init(NULL, value);
       }
@@ -685,13 +772,28 @@ void get_info(mediacheck_t *media)
         media->pad_blocks = strtoul(value, NULL, 0) << 2;
       }
     }
+    else if(!strcasecmp(key, "skipsectors")) {
+      if(value && isdigit(*value)) {
+        media->skip_blocks = strtoul(value, NULL, 0) << 2;
+      }
+    }
+    else if(!strcasecmp(key, "fragment count")) {
+      if(value && isdigit(*value)) {
+        media->fragment.count = strtoul(value, NULL, 0);
+      }
+    }
+    else if(!strcasecmp(key, "fragment sums")) {
+      if(value) {
+        strncpy(media->fragment.sums_ref, value, sizeof media->fragment.sums_ref - 1);
+      }
+    }
     else if(!strcasecmp(key, "signature")) {
       if(value && isdigit(*value)) {
         media->signature.start = strtoul(value, NULL, 0);
 
         if(
           media->signature.start &&
-          lseek(fd, media->signature.start * 0x200, SEEK_SET) == media->signature.start * 0x200 &&
+          lseek(fd, (off_t) media->signature.start * 0x200, SEEK_SET) == (off_t) media->signature.start * 0x200 &&
           read(fd, media->signature.magic, sizeof media->signature.magic) == sizeof media->signature.magic &&
           read(fd, media->signature.data, sizeof media->signature.data) == sizeof media->signature.data &&
           !memcmp(media->signature.magic, SIGNATURE_MAGIC, sizeof SIGNATURE_MAGIC - 1) &&
@@ -785,7 +887,7 @@ void update_progress(mediacheck_t *media, unsigned blocks)
  * digest: pointer to digest struct
  * region: pointer to region (start and size of area) over which to calculate digest
  * chunk: current chunk (counted 0-based)
- * chunk_blocks: chunk size in blocks (0.5 kB)
+ * chunk_blocks: chunk size in blocks (0.5 kiB)
  * buffer: chunk_blocks sized buffer
  *
  * Start and end of the area may not be aligned with chunks. So we need
@@ -825,39 +927,45 @@ void process_chunk(mediacheck_digest_t *digest, chunk_region_t *region, unsigned
  * Normalize (clear) some data in buffer.
  *
  * buffer size is chunk_blocks * 0x200 bytes
- * buffer size is guaranteed to be >= 64 kiB
+ * chunks will always be 2 kiB aligned and at least 2 kiB in size
  *
  * Normalized data assumes
- *   - 0x0000 - 0x01ff (mbr) is filled with zeros (0)
+ *   - SUSE style only: 0x0000 - 0x01ff (mbr) is filled with zeros (0)
  *   - 0x8373 - 0x8572 (iso9660 app data) is filled with spaces (' ').
  *   - signature block (2 kiB) contains only magic id + zeros (0)
  */
 void normalize_chunk(mediacheck_t *media, unsigned chunk, unsigned chunk_blocks, unsigned char *buffer)
 {
-  unsigned pos, ofs, u;
+  unsigned start_block = chunk * chunk_blocks;
+  unsigned end_block = start_block + chunk_blocks;
 
-  if(chunk == 0) {
-    // mbr
+  uint64_t start_ofs = (uint64_t) start_block << 9;
+  uint64_t end_ofs = (uint64_t) end_block << 9;
+
+  if(
+    media->style == style_suse &&
+    start_ofs == 0
+  ) {
+    // clear MBR area
     memset(buffer, 0, 0x200);
-    // app data block
-    memset(buffer + ISO9660_APP_DATA_START, ' ', ISO9660_APP_DATA_LENGTH);
   }
 
-  if(!media->signature.start) return;
+  // application data block
+  if(
+    ISO9660_APP_DATA_START >= start_ofs &&
+    ISO9660_APP_DATA_START + ISO9660_APP_DATA_LENGTH <= end_ofs
+  ) {
+    memset(buffer + ISO9660_APP_DATA_START - start_ofs, ' ', ISO9660_APP_DATA_LENGTH);
+  }
 
-  pos = chunk * chunk_blocks;
-
-  if(media->signature.start < pos || media->signature.start >= pos + chunk_blocks) return;
-
-  ofs = media->signature.start - pos;
-
-  for(u = 0; u < 4 && ofs + u < chunk_blocks; u++) {
-    if(u == 0) {
-      memset(buffer + ((u + ofs) << 9) + 0x40, 0, 0x200 - 0x40);
-    }
-    else {
-      memset(buffer + ((u + ofs) << 9), 0, 0x200);
-    }
+  // reset signature area (4 blocks)
+  if(
+    media->signature.start &&
+    media->signature.start >= start_block &&
+    media->signature.start + 4 <= end_block
+  ) {
+    // keep first 64 bytes (signature magic)
+    memset(buffer + ((media->signature.start - start_block) << 9) + 0x40, 0, (4 << 9) - 0x40);
   }
 }
 
@@ -964,8 +1072,14 @@ void verify_signature(mediacheck_t *media)
     set_signature_state(media, sig_bad);
 
     if(media->signature.gpg_sign_log) {
-      if(strstr(media->signature.gpg_sign_log, "gpg: Good signature ")) {
+      char *signee_start, *signee_end;
+      if((signee_start = strstr(media->signature.gpg_sign_log, "gpg: Good signature from \""))) {
         set_signature_state(media, sig_ok);
+        signee_start += sizeof "gpg: Good signature from \"" - 1;
+        if((signee_end = strchr(signee_start, '"'))) {
+          free(media->signature.signed_by);
+          asprintf(&media->signature.signed_by, "%.*s", (int) (signee_end - signee_start), signee_start);
+        }
       }
       if(strstr(media->signature.gpg_sign_log, "gpg: Can't check signature: No public key")) {
         set_signature_state(media, sig_bad_no_key);

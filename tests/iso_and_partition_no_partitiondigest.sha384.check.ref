@@ -1,10 +1,11 @@
        tags: key = "pad", value = "25"
        tags: key = "sha384sum", value = "0468c1ed873d9ceec9a462004a67b344bcb1769bcb90089652364e64963292448adc1f00eab088a4a92305292d72c1f9"
         app: iso_and_partition_no_partitiondigest
-   iso size: 450 kB
-        pad: 50 kB
-  full size: 500 kB
+   iso size: 450 kiB
+        pad: 50 kiB
+  full size: 500 kiB
     iso ref: 0468c1ed873d9ceec9a462004a67b344bcb1769bcb90089652364e64963292448adc1f00eab088a4a92305292d72c1f9
+      style: suse
    checking:       0% 12% 25% 38% 51% 64% 76% 89%100%
      result: iso sha384 ok
  iso sha384: 0468c1ed873d9ceec9a462004a67b344bcb1769bcb90089652364e64963292448adc1f00eab088a4a92305292d72c1f9

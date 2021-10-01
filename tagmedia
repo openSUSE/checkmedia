@@ -3,9 +3,13 @@
 # Add/remove key=value pairs from iso application area (0x200 bytes starting
 # at 0x8373). Entries are separated by semicolons (';').
 #
-# Digest is calculated assuming all zeros in 0x0000-0x01ff (MBR) and all
-# spaces in 0x8373-0x8572.
-
+# Digest is calculated assuming
+#   - all zeros in 0x0000-0x01ff (MBR) (only suse style) and
+#   - all spaces in 0x8373-0x8572 (ISO9660, application specific data block)
+#
+# If a signature block is embedded, the signature block is replaced with an
+# empty signature block while calculating the digest.
+#
 use strict;
 
 use Getopt::Long;
@@ -17,16 +21,18 @@ $Data::Dumper::Sortkeys = 1;
 $Data::Dumper::Terse = 1;
 $Data::Dumper::Indent = 1;
 
+our $VERSION = "0.0";
+
 # Here are some ISO9660 file system related constants.
 #
-# If in doubt about the ISO9660 layout, check http://alumnus.caltech.edu/~pje/iso9660.html
+# If in doubt about the ISO9660 layout, check https://wiki.osdev.org/ISO_9660
 #
 use constant {
   # offset of volume descriptor
   # usually points to "\x01CD001\x01\x00"
   ISO9660_MAGIC_START => 0x8000,
 
-  # offset of volume size (in 2 kB units)
+  # offset of volume size (in 2 kiB units)
   # stored as 32 bit little-endian, followed by a 32 bit big-endian value
   ISO9660_VOLUME_SIZE => 0x8050,
 
@@ -70,10 +76,25 @@ use constant {
   SIGNATURE_MAGIC => "7984fc91-a43f-4e45-bf27-6d3aa08b24cf"
 };
 
+# Some RH specific constants.
+#
+# see https://github.com/rhinstaller/isomd5sum
+#
+use constant {
+  # 60 is fixed; $opt_fragments must be a divisor of TOTAL_FRAGMENT_SUM_SIZE
+  TOTAL_FRAGMENT_SUM_SIZE => 60,
+  # default fragment count
+  FRAGMENTS_DEFAULT => 20,
+  # the default number of blocks to skip in digest calculation
+  SKIP_DEFAULT => 15,
+};
+
 sub usage;
 sub read_image_blob;
 sub get_image_type;
-sub get_padding;
+sub get_pad_value;
+sub get_skip_value;
+sub get_fragments_value;
 sub read_tags;
 sub write_tags;
 sub parse_tag;
@@ -83,14 +104,21 @@ sub remove_tag;
 sub prepare_buffer;
 sub add_to_digest;
 sub calculate_digest;
+sub create_signature_block_if_missing;
 sub export_tags;
 sub export_signature;
 sub import_signature;
+sub create_signature;
 sub normalize_buffer;
+sub guess_style;
 
 my $opt_digest = undef;
 my $opt_check = 0;
+my $opt_supported = 0;
 my $opt_pad = undef;
+my $opt_skip = undef;
+my $opt_fragments = undef;
+my $opt_style = undef;
 my $opt_show = 1;
 my $opt_clean = 0;
 my @opt_add_tag;
@@ -99,22 +127,29 @@ my $opt_verbose;
 my $opt_tags_export;
 my $opt_signature_export;
 my $opt_signature_import;
+my $opt_signature_create;
 
 GetOptions(
   'show'               => \$opt_show,
   'md5|md5sum'         => sub { $opt_digest = 'md5' },
   'digest=s'           => \$opt_digest,
+  'style=s'            => sub { die "Unsupported style: $_[1]\n" if $_[1] !~ /^(rh|suse)$/i; $opt_style = "\L$_[1]" },
   'check'              => \$opt_check,
+  'supported'          => \$opt_supported,
   'pad=i'              => \$opt_pad,
+  'skip=i'             => \$opt_skip,
+  'fragments=i'        => sub { die "Unsupported number of fragments: $_[1]\n" if $_[1] < 1 || TOTAL_FRAGMENT_SUM_SIZE % $_[1]; $opt_fragments = $_[1] },
   'add-tag=s'          => \@opt_add_tag,
   'remove-tag=s'       => \@opt_remove_tag,
   'export-tags=s'      => \$opt_tags_export,
   'export-signature=s' => \$opt_signature_export,
   'import-signature=s' => \$opt_signature_import,
+  'create-signature=s' => \$opt_signature_create,
   'clean'              => \$opt_clean,
-  'verbose|v'          => \$opt_verbose,
+  'verbose|v'          => sub { $opt_verbose++ },
+  'version'            => sub { print "$VERSION\n"; exit 0 },
   'help'               => sub { usage 0 },
-);
+) || usage 1;
 
 my $image_data;			# hash ref with image related data
 my $current_tags = [];		# current list of tags
@@ -122,8 +157,10 @@ my $old_tags = [];		# original list of tags
 my $digest_iso;			# digest calculated over iso image
 my $digest_part;		# digest calculated over partition
 
-# Note: all '*_block' variables use 0.5 kB units.
+# Note: all '*_block' variables use 0.5 kiB units.
 
+my $fragment_sum_size;
+my $signature_key = "signature";
 
 # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
 $image_data->{name} = shift;
@@ -132,13 +169,25 @@ if($image_data->{name} eq '') {
   usage 1;
 }
 
-$image_data->{write} = $opt_digest || defined $opt_pad || $opt_check || @opt_add_tag || @opt_remove_tag || $opt_clean;
+$image_data->{write} = $opt_digest || defined $opt_pad || defined $opt_skip || $opt_check ||
+  $opt_supported || $opt_clean || @opt_add_tag || @opt_remove_tag;
+
+read_image_blob $image_data;
+get_image_type $image_data;
+
+$old_tags = read_tags $image_data;
+$opt_style = guess_style $old_tags if !defined $opt_style;
+
+$old_tags = [] if $opt_clean;
+
+# clone tag list
+set_tag $current_tags, { key => $_->{key}, value =>  $_->{value} } for @$old_tags;
 
 if($opt_digest =~ /^md5(sum)?$/i) {
   $digest_iso = Digest::MD5->new;
   $digest_part = Digest::MD5->new;
 }
-elsif($opt_digest =~ /^sha(1|224|256|384|512)(sum)?$/i) {
+elsif($opt_digest =~ /^sha(1|224|256|384|512)(sum)?$/i && $opt_style eq 'suse') {
   $digest_iso = Digest::SHA->new($1);
   $digest_part = Digest::SHA->new($1);
 }
@@ -146,17 +195,26 @@ elsif($opt_digest) {
   die "$opt_digest: unsupported digest\n";
 }
 
-read_image_blob $image_data;
-get_image_type $image_data;
+get_fragments_value $current_tags;
 
-$old_tags = read_tags $image_data unless $opt_clean;
+if($opt_style eq 'suse') {
+  set_tag $current_tags, { key => "check", value => 1 } if $opt_check;
+}
+else {
+  # MD5 has a size of 16 bytes; 60 / $opt_fragments must not be larger than that
+  die "Unsupported number of fragments: $opt_fragments\n" if $opt_fragments < 4;
+  $signature_key = "\U$signature_key";
+  set_tag $current_tags, { key => "RHLISOSTATUS", value => $opt_supported ? 1 : 0 } if $opt_supported || $opt_digest;
+}
 
-# clone tag list
-set_tag $current_tags, { key => $_->{key}, value =>  $_->{value} } for @$old_tags;
-
-set_tag $current_tags, { key => "check", value => 1 } if $opt_check;
-
-get_padding $image_data, $current_tags;
+if($opt_digest) {
+  if($opt_style eq 'suse') {
+    get_pad_value $image_data, $current_tags;
+  }
+  else {
+    get_skip_value $image_data, $current_tags;
+  }
+}
 
 if($opt_tags_export) {
   export_tags $image_data, $opt_tags_export;
@@ -170,20 +228,25 @@ if($opt_signature_export) {
   exit 0;
 }
 
+if($opt_signature_create) {
+  create_signature_block_if_missing $image_data;
+  create_signature $image_data, $opt_signature_create;
+
+  exit 0;
+}
+
 if($opt_signature_import) {
+  create_signature_block_if_missing $image_data;
   import_signature $image_data, $opt_signature_import;
 
   exit 0;
 }
 
-if(my $sig = get_tag $current_tags, "signature") {
+if(my $sig = get_tag $current_tags, $signature_key) {
   $image_data->{signature_start} = $sig->{value} + 0;
 }
 
 prepare_buffer $image_data;
-
-# print Dumper $image_data;
-# print Dumper $current_tags;
 
 # calculate digest
 calculate_digest $image_data if $opt_digest;
@@ -192,7 +255,7 @@ calculate_digest $image_data if $opt_digest;
 close $image_data->{fh};
 
 if($image_data->{signature_start}) {
-  set_tag $current_tags, { key => "signature", value => $image_data->{signature_start} };
+  set_tag $current_tags, { key => $signature_key, value => $image_data->{signature_start} };
 }
 
 for (@opt_add_tag) {
@@ -203,9 +266,15 @@ for (@opt_remove_tag) {
   $current_tags = remove_tag $current_tags, $_;
 }
 
+if($opt_digest && $opt_style ne 'suse') {
+  my $msg = "THIS IS NOT THE SAME AS RUNNING MD5SUM ON THIS ISO!!";
+  $current_tags = remove_tag $current_tags, $msg;
+  set_tag $current_tags, { key => $msg };
+}
+
 write_tags $image_data, $current_tags if $image_data->{write};
 
-# print tags for user's pleasure
+# finally, print current tags
 for (@{$image_data->{write} ? $current_tags : $old_tags}) {
   print "$_->{key}";
   print " = $_->{value}" if defined $_->{value};
@@ -222,23 +291,47 @@ sub usage
 {
   (my $msg = <<"  = = = = = = = =") =~ s/^ {4}//mg;
     Usage: tagmedia [OPTIONS] IMAGE
-    Add/remove tags to SUSE installation media.
 
-    IMAGE is an SUSE installation medium; either DVD image or disk image.
+    Add/remove tags to installation media. If a digest is added, the media can be verified
+    with checkmedia (both rh and suse style) or checkisomd5 (rh style only).
 
-    Options:
+    The embedded digests can optionally be signed to ensure their authenticity.
 
-      --show                    Show currently set tags (default if no option is given).
-      --digest DIGEST           Add digest DIGEST (md5, sha1, sha224, sha256, sha384, sha512).
-      --pad N                   Ignore N 2 kB blocks of padding (at image end).
-      --check                   Tell installer to run media check at startup.
-      --add-tag foo=bar         Add tag foo with value bar.
-      --remove-tag foo          Remove tag foo.
-      --export-tags FILE        Export raw tag data to FILE.
-      --export-signature FILE   Export image signature to FILE.
-      --import-signature FILE   Import image signature from FILE.
-      --clean                   Remove all tags.
+    IMAGE is an installation medium; either ISO image or disk image.
+
+    General options:
+
+      --style STYLE             Data format. STYLE can be either rh or suse (default:
+                                auto-detected).
+      --version                 Show version.
+      --verbose                 More logging. Repeat for even more logging.
       --help                    Write this help text.
+
+    Tag related options:
+
+      --show                    Show current tags (default if no option is given).
+      --add-tag FOO=BAR         Add tag FOO with value BAR.
+      --remove-tag FOO          Remove tag FOO.
+      --clean                   Remove all tags.
+      --export-tags FILE        Export raw tag data to FILE.
+
+    Digest related options:
+
+      --digest DIGEST           Add digest DIGEST (suse style: md5, sha1, sha224, sha256, sha384, sha512,
+                                rh style: md5).
+      --fragments N             Split image into N fragments with individual digests (suse style default: 0,
+                                rh style default: 20)
+      --pad N                   Ignore N 2 kiB blocks of padding at image end (suse style).
+      --skip N                  Ignore N 2 kiB blocks at image end (rh style, default: 15).
+      --check                   Tell installer to run media check at startup (suse style).
+      --supported               Set supported flag (rh style).
+
+    Signature related options:
+
+      --create-signature KEYID  Sign meta data in IMAGE with GPG key KEYID. The public part of KEYID is
+                                exported to the file IMAGE.key.
+      --import-signature FILE   Import signature from FILE.
+      --export-signature FILE   Export signature to FILE.
 
   = = = = = = = =
 
@@ -251,7 +344,7 @@ sub usage
 # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
 # read_image_blob(image)
 #
-# Read first 36 kB.
+# Read first 64 kiB.
 # Note: leaves $image_data ->{fh} open for calculate_digest() to continue reading.
 #
 # image: hash with image related data
@@ -260,8 +353,8 @@ sub read_image_blob
 {
   my ($image) = @_;
 
-  my $blob_size = 0x9000;
-  $image->{blob_blocks} = $blob_size >> 9;		# in 0.5 kB units
+  my $blob_size = 0x10000;
+  $image->{blob_blocks} = $blob_size >> 9;		# in 0.5 kiB units
 
   die "$image->{name}: $!\n" unless open $image->{fh}, $image->{name};
   die "$image->{name}: $!\n" unless sysread $image->{fh}, $image->{blob}, $blob_size;
@@ -275,7 +368,7 @@ sub read_image_blob
 # Analyze image type and get some basic data.
 #
 # image: hash with image related data
-# image->{blob}: buffer containing a sufficiently large portion of the image (36 kB)
+# image->{blob}: buffer containing a sufficiently large portion of the image (36 kiB)
 #
 sub get_image_type
 {
@@ -301,7 +394,7 @@ sub get_image_type
 
   # Scan mbr for last primary partition.
   #
-  # Set $image->{part_start}, $image->{part_blocks} (in 0.5 kB units).
+  # Set $image->{part_start}, $image->{part_blocks} (in 0.5 kiB units).
   #
   if(substr($image->{blob}, MBR_MAGIC_START, 2) eq "\x55\xaa") {
     for (my $idx = 0; $idx < 4; $idx++) {
@@ -309,6 +402,10 @@ sub get_image_type
         "Cx3Cx3VV",
         substr($image->{blob}, MBR_PARTITION_TABLE + 0x10 * $idx, 0x10)
       );
+      # if there's a partition starting at block 0, skip this and don't report a partition
+      # this partition may have type 0
+      last if !($boot & 0x7f) && $size && !$start;
+
       if(
         $type &&
         !($boot & 0x7f) &&
@@ -321,16 +418,20 @@ sub get_image_type
     }
   }
 
-  print "iso blocks = $image->{iso_blocks}, partition blocks = $image->{part_blocks} @ $image->{part_start}\n" if $opt_verbose;
+  if($opt_verbose >= 1) {
+    print "iso blocks = $image->{iso_blocks}";
+    print ", partition blocks = $image->{part_blocks} @ $image->{part_start}" if $image->{part_blocks};
+    print "\n";
+  }
 
   die "$image->{name}: unsupported image format\n" unless $image->{iso_blocks} || $image->{part_blocks};
 }
 
 
 # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
-# get_padding(image, tags)
+# get_pad_value(image, tags)
 #
-# Get padding value to use.
+# Get pad value to use.
 #
 # image: hash with image related data
 # tags: array ref with tag hashes
@@ -338,23 +439,97 @@ sub get_image_type
 # Note: this uses the value passed via '--pad' option and stores it as
 # 'pad' tag.
 #
-sub get_padding
+sub get_pad_value
 {
   my ($image, $tags) = @_;
   my $padding_set;
 
   if($image->{iso_blocks}) {
-    set_tag $tags, { key => "pad", value => $opt_pad } if $opt_pad;
     my $pad_tag = get_tag $tags, "pad";
 
-    $image->{pad_blocks} = $pad_tag->{value} << 2 if $pad_tag;
+    my $pad_value = $opt_pad;
+    $pad_value = $pad_tag->{value} if $pad_tag && !defined $pad_value;
+
+    set_tag $tags, { key => "pad", value => $pad_value } if defined $pad_value;
+
+    $image->{pad_blocks} = $pad_value << 2;
     $image->{iso_blocks} -= $image->{pad_blocks};
 
-    die "padding too large\n" if $image->{iso_blocks} <= 0;
+    die "pad value too large\n" if $image->{iso_blocks} <= 0;
   }
   else {
     remove_tag $tags, "pad";
   }
+}
+
+
+# - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+# get_skip_value(image, tags)
+#
+# Get skip value to use.
+#
+# image: hash with image related data
+# tags: array ref with tag hashes
+#
+# Note: this uses the value passed via '--skip' option and stores it as
+# 'SKIPSECTORS' tag.
+#
+sub get_skip_value
+{
+  my ($image, $tags) = @_;
+  my $padding_set;
+
+  if($image->{iso_blocks}) {
+    my $skip_tag = get_tag $tags, "SKIPSECTORS";
+
+    my $skip_value = $opt_skip;
+    $skip_value = $skip_tag->{value} if $skip_tag && !defined $skip_value;
+
+    set_tag $tags, { key => "SKIPSECTORS", value => $skip_value } if defined $skip_value;;
+
+    $skip_value = SKIP_DEFAULT if !defined $skip_value;
+
+    $image->{skip_blocks} = $skip_value << 2;
+    $image->{iso_blocks} -= $image->{skip_blocks};
+
+    die "skip value too large\n" if $image->{iso_blocks} <= 0;
+  }
+  else {
+    remove_tag $tags, "SKIPSECTORS";
+  }
+}
+
+
+# - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+# get_fragments_value(tags)
+#
+# Get fragment count value to use.
+#
+# tags: array ref with tag hashes
+#
+sub get_fragments_value
+{
+  my ($tags) = @_;
+
+  if(! defined $opt_fragments) {
+    my $fragments_tag = get_tag $tags, "fragment count";
+    $opt_fragments = $fragments_tag->{value} if $fragments_tag;
+    $opt_fragments = FRAGMENTS_DEFAULT if !defined $opt_fragments && $opt_style eq 'rh';
+  }
+
+  return if $opt_style eq 'suse' && $opt_fragments == 0;
+
+  if(
+    $opt_fragments < 1 ||
+    # must be divisable
+    TOTAL_FRAGMENT_SUM_SIZE % $opt_fragments ||
+    # MD5 has a size of 16 bytes; (60 / $opt_fragments) must not be larger than that
+    ($opt_style eq 'rh' && $opt_fragments < 4)
+  ) {
+    die "Unsupported number of fragments: $opt_fragments\n" if $opt_fragments < 4;
+  }
+
+  $fragment_sum_size =  TOTAL_FRAGMENT_SUM_SIZE / $opt_fragments;
 }
 
 
@@ -364,7 +539,7 @@ sub get_padding
 # Read existing tags from image fragment.
 #
 # image: hash with image related data
-# image->{blob}: buffer containing a sufficiently large portion of the image (36 kB)
+# image->{blob}: buffer containing a sufficiently large portion of the image (36 kiB)
 # tags: array ref with tags
 # tags are hashes with key/value pairs - value is undef if there's no '='
 #
@@ -393,7 +568,7 @@ sub read_tags
 # Note: this does not write anything to disk!
 #
 # image: hash with image related data
-# image->{blob}: buffer containing a sufficiently large portion of the image (36 kB)
+# image->{blob}: buffer containing a sufficiently large portion of the image (36 kiB)
 # tags: array ref with tags
 #
 sub write_tags
@@ -404,7 +579,9 @@ sub write_tags
   for my $tag (@$tags) {
     $buf .= ";" if defined $buf;
     $buf .= $tag->{key};
-    $buf .= "=$tag->{value}" if defined $tag->{value};
+    # yes, that's how it is: https://github.com/rhinstaller/isomd5sum/blob/41904dbcd95563070b275f629e8ca6e558775b04/utilities.c#L142-L186
+    my $sep = $opt_style eq 'suse' || $tag->{key} eq "RHLISOSTATUS" ? "=" : " = ";
+    $buf .= "$sep$tag->{value}" if defined $tag->{value};
   }
 
   die "tags too large: \"$buf\"\n" if length($buf) > ISO9660_APP_DATA_LENGTH;
@@ -459,6 +636,11 @@ sub get_tag
     return $tag if $tag->{key} eq $key;
   }
 
+  # try again, case insensitive
+  for my $tag (@$tags) {
+    return $tag if "\L$tag->{key}" eq "\L$key";
+  }
+
   return undef;
 }
 
@@ -508,13 +690,13 @@ sub remove_tag
 # Reset some areas in image blob to defined values before starting digest calculation.
 #
 # image: hash with image related data
-# image->{blob}: buffer containing a sufficiently large portion of the image (36 kB)
+# image->{blob}: buffer containing a sufficiently large portion of the image (36 kiB)
 #
 sub prepare_buffer
 {
   my $image = $_[0];
 
-  substr($image->{blob}, MBR_OFFSET, MBR_LENGTH) = "\x00" x MBR_LENGTH;
+  substr($image->{blob}, MBR_OFFSET, MBR_LENGTH) = "\x00" x MBR_LENGTH if $opt_style eq 'suse';
   substr($image->{blob}, ISO9660_APP_DATA_START, ISO9660_APP_DATA_LENGTH) = " " x ISO9660_APP_DATA_LENGTH;
 }
 
@@ -534,7 +716,7 @@ sub prepare_buffer
 # buf_blocks: buffer blocks
 # buf: buffer ref
 #
-# Note: a block is 0.5 kB.
+# Note: a block is 0.5 kiB.
 #
 sub process_digest
 {
@@ -593,9 +775,20 @@ sub calculate_digest
 
   my $pos = $image->{blob_blocks};
   my $step_blocks = 2048;	# 1 MiB chunks
+  my $fragment_bytes = int(($iso_blocks << 9) / ($opt_fragments + 1));
+
+  if($opt_fragments) {
+    # to get fragment checksum right
+    $step_blocks = 64;		# 32 kiB chunks
+  }
+
+  print "full blocks = $full_blocks, fragment bytes = $fragment_bytes\n" if $opt_verbose >= 1 && $opt_fragments;
 
   process_digest $digest_iso, $iso_start, $iso_blocks, 0, $pos, $image->{blob};
   process_digest $digest_part, $part_start, $part_blocks, 0, $pos, $image->{blob};
+
+  my $last_fragment = 0;
+  my $fragment_digest;
 
   while($pos < $full_blocks) {
     my $buf;
@@ -610,9 +803,24 @@ sub calculate_digest
     process_digest $digest_iso, $iso_start, $iso_blocks, $pos, $to_read, $buf;
     process_digest $digest_part, $part_start, $part_blocks, $pos, $to_read, $buf;
 
+    if($opt_fragments) {
+      my $fragment = int(($pos << 9) / $fragment_bytes);
+      if($fragment != $last_fragment) {
+        my @d = unpack "C*", $digest_iso->clone->digest;
+        for (my $i = 0; $i < $fragment_sum_size && defined $d[$i]; $i++) {
+          $fragment_digest .= substr sprintf("%x", $d[$i]), 0, 1;
+        }
+        my $d = $digest_iso->clone->hexdigest;
+        printf "fragment %2d, blocks %8d: $opt_digest %s - %s\n", $fragment, $pos + $to_read, $d, substr($fragment_digest, -$fragment_sum_size, $fragment_sum_size) if $opt_verbose >= 2;
+
+        $last_fragment = $fragment;
+      }
+    }
+
     $pos += $to_read;
   }
 
+  # store digest over ISO image
   if($image->{iso_blocks}) {
     my $buf = "\x00" x 0x200;
     my $pad_blocks = $image->{pad_blocks};
@@ -622,15 +830,40 @@ sub calculate_digest
     }
 
     $digest_iso = $digest_iso->hexdigest;
-    set_tag $current_tags, { key => "${opt_digest}sum", value => $digest_iso };
+
+    if($opt_style eq 'suse') {
+      set_tag $current_tags, { key => "${opt_digest}sum", value => $digest_iso };
+      if($opt_fragments) {
+        set_tag $current_tags, { key => "fragment sums", value => $fragment_digest };
+        set_tag $current_tags, { key => "fragment count", value => $opt_fragments };
+      }
+    }
+    else {
+      set_tag $current_tags, { key => "SKIPSECTORS", value => $image->{skip_blocks} >> 2 };
+      set_tag $current_tags, { key => "FRAGMENT SUMS", value => $fragment_digest };
+      set_tag $current_tags, { key => "FRAGMENT COUNT", value => $opt_fragments };
+      set_tag $current_tags, { key => "ISO \U${opt_digest}sum", value => $digest_iso };
+    }
   }
 
-  if($image->{part_blocks}) {
+  # store digest over partition
+  if($image->{part_blocks} && $opt_style eq 'suse') {
     $digest_part = $digest_part->hexdigest;
     set_tag $current_tags, {
       key => "partition",
       value => "$image->{part_start},$image->{part_blocks},$digest_part"
     }
+  }
+
+  # Run normalize_buffer() explicitly over the first block of the skipped
+  # region in case the signature block has been placed there.
+  #
+  # This is just for auto-detecting the signature location; it has no effect
+  # on the digest calculation.
+  if($opt_style ne 'suse' && $image->{skip_blocks} >= 4) {
+    my $buf;
+    my $read_len = sysread $image->{fh}, $buf, 4 << 9;
+    normalize_buffer $image, $pos, \$buf if $read_len == 4 << 9;
   }
 }
 
@@ -649,13 +882,54 @@ sub export_tags
 
   my $buf = substr($image->{blob}, ISO9660_APP_DATA_START, ISO9660_APP_DATA_LENGTH);
 
-  if(open my $f, ">", $file) {
+  if(open my $f, ">$file") {
     print $f $buf;
     close $f;
   }
   else {
     die "$file: $!\n";
   }
+}
+
+
+# - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+# create_signature_block_if_missing(image)
+#
+# If there's no signature block, create a signature block at the end of the
+# ISO in the skipped area - if one exists.
+#
+# image: hash with image related data
+#
+sub create_signature_block_if_missing
+{
+  my ($image) = @_;
+  my $sig = get_tag $current_tags, $signature_key;
+
+  return if $sig;
+
+  get_skip_value $image, $current_tags;
+
+  return if !($image->{skip_blocks} && $image->{iso_blocks});
+
+  $image->{signature_start} = $image->{iso_blocks};
+  $sig = { key => $signature_key, value => $image->{signature_start} };
+  set_tag $current_tags, $sig;
+
+  # empty signature block
+  my $buf = SIGNATURE_MAGIC . ("\x00" x 0x800);
+
+  # update tags
+  # note: implicitly closes $image->{fh}
+  write_tags $image, $current_tags;
+
+  # re-read meta data to be in sync
+  # note: implicitly re-opens $image->{fh}
+  read_image_blob $image;
+  close $image->{fh};
+
+  die "$image->{name}: $!\n" unless open $image->{fh}, "+<", $image->{name};
+  die "$image->{name}: $!\n" unless seek $image->{fh}, $sig->{value} * 0x200, 0;
+  die "$image->{name}: $!" unless 0x800 == syswrite $image->{fh}, $buf, 0x800;
 }
 
 
@@ -670,7 +944,7 @@ sub export_tags
 sub export_signature
 {
   my ($image, $file) = @_;
-  my $sig = get_tag $current_tags, "signature";
+  my $sig = get_tag $current_tags, $signature_key;
 
   my $buf;
 
@@ -684,7 +958,7 @@ sub export_signature
 
   $buf =~ s/\x00*$//;
 
-  if(open my $f, ">", $file) {
+  if(open my $f, ">$file") {
     print $f $buf;
     close $f;
   }
@@ -705,7 +979,7 @@ sub export_signature
 sub import_signature
 {
   my ($image, $file) = @_;
-  my $sig = get_tag $current_tags, "signature";
+  my $sig = get_tag $current_tags, $signature_key;
 
   my $buf;
 
@@ -717,7 +991,7 @@ sub import_signature
 
   my $buf2;
 
-  if(open my $f, "<", $file) {
+  if(open my $f, "<$file") {
     local $/;
     $buf2 = <$f>;
     close $f;
@@ -741,9 +1015,34 @@ sub import_signature
 
 
 # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+# create_signature(image, keyid)
+#
+# Create signature data using GPG key with keyid.
+# Fore convenience, export the public key to a file "$image->{name}.key".
+#
+# image: hash with image related data
+# keyid: GPG keyid
+#
+sub create_signature
+{
+  my ($image, $keyid) = @_;
+
+  my $tag_block = substr($image->{blob}, ISO9660_APP_DATA_START, ISO9660_APP_DATA_LENGTH);
+
+  if(open my $p, "| gpg --local-user '$keyid' --batch --yes --armor --detach-sign - >$image->{name}.tmp_key") {
+    print $p $tag_block;
+    close $p;
+    import_signature $image, "$image->{name}.tmp_key";
+    system "gpg --batch --yes --armor --export '$keyid' >$image->{name}.key";
+  }
+  unlink "$image->{name}.tmp_key";
+}
+
+
+# - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
 # normalize_buffer(image, pos, buffer_ref)
 #
-# If buffer contains signature block (2 kiB), clear signature block.
+# If buffer contains the signature block (2 kiB), clear signature block.
 # A cleared signature block containts 0x40 bytes magic header, the rest is
 # all zeros (0).
 #
@@ -782,4 +1081,29 @@ sub normalize_buffer
       }
     }
   }
+}
+
+
+# - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+# guess_style(tags)
+#
+# Guess meta data style based on existing tags.
+#
+# Return 'suse' (default) or 'rh'.
+#
+# tags: array ref with tag hashes
+# tag: tag hash ref ('key', 'value' pair)
+#
+sub guess_style
+{
+  my ($tags) = @_;
+  my $style = 'suse';
+
+  for my $tag (@$tags) {
+    $style = 'rh' if $tag->{key} =~ /^(SKIPSECTORS|RHLISOSTATUS|ISO .*SUM)$/;
+  }
+
+  print "detected $style style\n" if $opt_verbose >= 1;
+
+  return $style;
 }

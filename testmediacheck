@@ -300,7 +300,7 @@ sub run_test
   sign_image "$base.img", $config->{sign};
 
   my $verbose;
-  $verbose = "-v" if $config->{sign} <= 1;	# avoid gpg log
+  $verbose = "-v -v" if $config->{sign} <= 1;	# avoid gpg log
 
   system "./checkmedia $verbose --key-file $gpg_dir1/test.pub $base.img >$base.$digest.check$ref";
 

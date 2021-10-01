@@ -2,12 +2,13 @@
        tags: key = "sha256sum", value = "624430d33fff980caf6e9801e119719419932f7399e9a73169d60ca61268ba6e"
        tags: key = "partition", value = "700,300,a4e0d25439ddfc8f8e353fc94f02688bf86ea6987872d034e884dd3125b47ef6"
         app: iso_too_small_ends_after_partition_start
-   iso size: 400 kB
-        pad: 50 kB
-  partition: start 350 kB, size 150 kB
-  full size: 500 kB
+   iso size: 400 kiB
+        pad: 50 kiB
+  partition: start 350 kiB, size 150 kiB
+  full size: 500 kiB
     iso ref: 624430d33fff980caf6e9801e119719419932f7399e9a73169d60ca61268ba6e
    part ref: a4e0d25439ddfc8f8e353fc94f02688bf86ea6987872d034e884dd3125b47ef6
+      style: suse
    checking:       0% 12% 25% 38% 51% 64% 76% 89%100%
      result: iso sha256 ok, partition sha256 ok
  iso sha256: 624430d33fff980caf6e9801e119719419932f7399e9a73169d60ca61268ba6e
