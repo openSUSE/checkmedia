@@ -855,15 +855,17 @@ sub calculate_digest
     }
   }
 
-  # Run normalize_buffer() explicitly over the first block of the skipped
-  # region in case the signature block has been placed there.
+  # Check first block of the skipped region in case the signature block has
+  # been placed there.
   #
   # This is just for auto-detecting the signature location; it has no effect
   # on the digest calculation.
   if($opt_style ne 'suse' && $image->{skip_blocks} >= 4) {
     my $buf;
     my $read_len = sysread $image->{fh}, $buf, 4 << 9;
-    normalize_buffer $image, $pos, \$buf if $read_len == 4 << 9;
+    if(SIGNATURE_MAGIC eq substr($buf, 0, length SIGNATURE_MAGIC)) {
+      $image->{signature_start} = $pos;
+    }
   }
 }
 
@@ -1058,7 +1060,7 @@ sub normalize_buffer
   my ($image, $pos, $buf_ref) = @_;
   my $blocks = length($$buf_ref) >> 9;
 
-  if(!$image->{signature_start}) {
+  if($opt_style eq 'suse' && !$image->{signature_start}) {
     for (my $i = 0; $i < $blocks; $i++) {
       if(SIGNATURE_MAGIC eq substr($$buf_ref, $i << 9, length SIGNATURE_MAGIC)) {
         $image->{signature_start} = $pos + $i;
