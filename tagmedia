@@ -490,7 +490,7 @@ sub get_skip_value
 
     set_tag $tags, { key => "SKIPSECTORS", value => $skip_value } if defined $skip_value;;
 
-    $skip_value = SKIP_DEFAULT if !defined $skip_value;
+    $skip_value = SKIP_DEFAULT if !defined $skip_value && $opt_style eq 'rh';
 
     $image->{skip_blocks} = $skip_value << 2;
     $image->{iso_blocks} -= $image->{skip_blocks};
