@@ -75,4 +75,4 @@ archive: changelog
 	xz -f package/$(PREFIX).tar
 
 clean:
-	rm -rf *.o *.so *.so.* *.1 *.html package checkmedia digestdemo *~ tests/*.{img,check,tag}
+	rm -rf *.o *.so *.so.* *.1 *.html package checkmedia digestdemo *~ */*~ tests/*.{img,check,tag}
