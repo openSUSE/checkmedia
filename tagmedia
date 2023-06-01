@@ -394,6 +394,8 @@ sub get_image_type
 
   # Scan mbr for last primary partition.
   #
+  # Ignore EFI system partition.
+  #
   # Set $image->{part_start}, $image->{part_blocks} (in 0.5 kiB units).
   #
   if(substr($image->{blob}, MBR_MAGIC_START, 2) eq "\x55\xaa") {
@@ -408,6 +410,7 @@ sub get_image_type
 
       if(
         $type &&
+        $type != 0xef &&
         !($boot & 0x7f) &&
         $size &&
         $start + $size > $image->{part_start} + $image->{part_blocks}
