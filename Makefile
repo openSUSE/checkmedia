@@ -21,6 +21,8 @@ DIGEST_OBJ  = $(DIGEST_SRC:.c=.o)
 
 LIBDIR = /usr/lib$(shell ldd /bin/sh | grep -q /lib64/ && echo 64)
 
+.PHONY: all doc clean install test archive
+
 all: checkmedia digestdemo
 
 checkmedia: checkmedia.c $(LIB_FILENAME)
@@ -57,6 +59,14 @@ install: checkmedia
 	ln -snf $(LIB_SONAME) $(DESTDIR)$(LIBDIR)/$(LIB_NAME).so
 	install -m 644 -D mediacheck.h $(DESTDIR)/usr/include/mediacheck.h
 
+%.1: %_man.adoc
+	asciidoctor -b manpage -a version=$(VERSION) -a soversion=${MAJOR_VERSION} $<
+
+README.html: README.adoc
+	asciidoctor -b html -a version=$(VERSION) -a soversion=${MAJOR_VERSION} $<
+
+doc: tagmedia.1 checkmedia.1 README.html
+
 archive: changelog
 	@if [ ! -d .git ] ; then echo no git repo ; false ; fi
 	mkdir -p package
@@ -65,4 +75,4 @@ archive: changelog
 	xz -f package/$(PREFIX).tar
 
 clean:
-	rm -rf *.o *.so *.so.* package checkmedia digestdemo *~ tests/*.{img,check,tag}
+	rm -rf *.o *.so *.so.* *.1 *.html package checkmedia digestdemo *~ tests/*.{img,check,tag}
