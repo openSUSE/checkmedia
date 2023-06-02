@@ -1,0 +1,163 @@
+= tagmedia(1)
+:doctype: manpage
+:manmanual: User Commands
+:mansource: tagmedia {version}
+
+== Name
+
+tagmedia - add/remove tags to installation or Live media.
+
+== Synopsis
+
+*tagmedia* [_OPTIONS_] _IMAGE_
+
+
+== Description
+
+Installation/Live media carry some meta data stored in a reserved area in the ISO9660 file system.
+
+*tagmedia* can display and modify these data.
+
+The data are in text form, structured as key=value pairs. Most notably they include a digest (checksum) over the
+entire medium that can be used for verification with *checkmedia*(1).
+
+The meta data block can optionally be signed to verify its authenticity.
+
+_IMAGE_ is an installation or Live medium; either ISO image or disk image.
+
+Meta data come in two flavors: SUSE (SLE, openSUSE) style and Red Hat (RHEL, Fedora, CentOS, AlmaLinux, Rocky, ...) style.
+Both variants are supported.
+
+For a detailed technical view, see file:///usr/share/doc/packages/libmediacheck{soversion}/README.html
+
+If a digest was added, the media can be verified with *checkmedia*(1) (both Red Hat and SUSE style) or *checkisomd5*(1) (Red Hat style only).
+
+=== General options
+
+*--style* _STYLE_::
+Data format. _STYLE_ can be either 'rh' or 'suse' (default: auto-detected).
+
+*--version*::
+Show *tagmedia* version.
+
+*-v*, *--verbose*::
+Show more detailed info (repeat for more).
+
+*--help*::
+Write this help text.
+
+=== Tag related options
+
+*--show*::
+Show current tags (default if no option is given).
+
+*--add-tag* _FOO_=_BAR_::
+Add tag _FOO_ with value _BAR_.
+
+*--remove-tag* _FOO_::
+Remove tag _FOO_.
+
+*--clean*::
+Remove all tags.
+
+*--export-tags* _FILE_::
+Export raw tag data to _FILE_.
+
+=== Digest related options
+
+*--digest* _DIGEST_::
+Add digest _DIGEST_ (suse style: md5, sha1, sha224, sha256, sha384, sha512, rh style: md5).
+
+*--fragments* _N_::
+Split image into _N_ fragments with individual digests (suse style default: 0, rh style default: 20)
+
+*--pad* _N_::
+Ignore _N_ 2 kiB blocks of padding at image end (suse style).
+
+*--skip* _N_::
+Ignore _N_ 2 kiB blocks at image end (rh style, default: 15).
+
+*--check*::
+Tell installer to run media check at startup (suse style).
+
+*--supported*::
+Set supported flag (rh style).
+
+=== Signature related options
+
+*--create-signature* _KEYID_::
+Sign meta data in _IMAGE_ with gpg key _KEYID_. The public part of _KEYID_ is exported to the file _IMAGE_.key.
+
+*--import-signature* _FILE_::
+Import signature from _FILE_.
+
+*--export-signature* _FILE_::
+Export signature to _FILE_.
+
+=== Legacy options
+
+*--md5*, *--md5sum*::
+Equivalent to *--digest md5*.
+
+== Digest notes
+
+The digest is calculated over the entire image, leaving out the meta data block and, if one exists, the signature block. Padding blocks
+are also not taken into account.
+
+For SUSE style media a separate digest over the last partition is also added, if a partition table exists.
+If this happens to be an EFI System Partition, the last but one partition is used.
+
+For Red Hat style media, the media is additionally split into parts (fragments) with separate checksums for each part to help localize
+where any mismatch occurs.
+
+For a description of how exactly the digests are calculated, see the detailed doc link below.
+
+== Signing notes
+
+You can add a signature of the meta data block. It can then be used to ensure the authenticity of the meta data, notably the stored digest.
+
+The signature is stored in a special 2 kiB block. The block can be anywhere in the image, usually as part of the file system.
+The block is identified by a magic id (see detailed doc link below).
+
+Note that usually this block has to be included during image creation. It does not have to be visible in the file system.
+
+*tagmedia* scans the image for a block with this magic id when calculating a digest and stores a reference to it in the 'signature' tag if one is found.
+
+As an exception, if no such block had been identified, *tagmedia* will try to create one in the padding area, if a padding area exists.
+
+If you do not want *tagmedia* to run gpg directly, it is also possible to create the signature independently of *tagmedia* using *--export-tags* to store the raw meta data in a file, then sign it
+and import the signature using the *--import-signature* option.
+
+== Open Build Service
+
+If a signature block is present the OBS will automatically sign images with the project key.
+
+You can get the public part of the project key needed for verification with *osc signkey*.
+
+== Examples
+
+----
+# display current meta data
+tagmedia foo.iso
+
+# create digest
+tagmedia --digest sha256 foo.iso
+
+# create digest, adding a rh-style fragment digest for early error detection
+tagmedia --digest sha256 --fragments 20 foo.iso
+
+# create signature, using gpg key id foo-key
+tagmedia --create-signature foo-key foo.iso
+----
+
+== See Also
+
+*checkisomd5*(1), *checkmedia*(1), *gpg*(1), *implantisomd5*(1), *osc*(1).
+
+== Links
+
+- detailed doc: https://github.com/openSUSE/checkmedia/blob/master/README.adoc
+- libmediacheck doc: https://github.com/openSUSE/checkmedia/blob/master/mediacheck.md
+- checkmedia web site: https://github.com/openSUSE/checkmedia
+- Open Build Service: https://openbuildservice.org
+- openSUSE Build Service: https://build.opensuse.org

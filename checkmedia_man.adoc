@@ -1,0 +1,77 @@
+= checkmedia(1)
+:doctype: manpage
+:manmanual: User Commands
+:mansource: checkmedia {version}
+
+== Name
+
+checkmedia - check installation or Live media.
+
+== Synopsis
+
+*checkmedia* [_OPTIONS_] _IMAGE_
+
+
+== Description
+
+Installation/Live media carry some meta data stored in a reserved area in the ISO9660 file system.
+
+*checkmedia* can use these data to verify the media integrity.
+
+_IMAGE_ is an installation or Live medium; either ISO image or disk image.
+
+Meta data come in two flavors: SUSE (SLE, openSUSE) style and Red Hat (RHEL, Fedora, CentOS, AlmaLinux, Rocky, ...) style.
+Both variants are supported.
+
+For a detailed technical view, see file:///usr/share/doc/packages/libmediacheck{soversion}/README.html
+
+=== Options
+
+*--key-file* _FILE_::
+Use public key in _FILE_ for signature verification.
+
+*--version*::
+Show *checkmedia* version.
+
+*-v*, *--verbose*::
+Show more detailed info (repeat for more).
+
+*-h*, *--help*::
+Write this help text.
+
+== Notes
+
+If the meta data block contains several digests - for example, a digest over the entire ISO and, in case there is a partition table, also
+a digest over a partition - all digests are checked.
+
+If a signature block is present, the signature is verified.
+
+The default setting is to use keys installed in */usr/lib/rpm/gnupg/keys*. Pass an individual key file using the *--key-file* option
+if some other key was used to sign (for example, your own key).
+
+To verify an image built in the Open Build Service, extract the public project key with *osc signkey*.
+
+== Examples
+
+----
+# check foo.iso
+checkmedia foo.iso
+
+# check foo.iso, verify signature using your personal key ring
+checkmedia --key-file ~/.gnupg/pubring.gpg foo.iso
+
+# check foo.iso, built in the OBS in Foo:Bar:Project using the OBS project key
+osc signkey Foo:Bar:Project | sed -e 's/>-/>\n-/' | checkmedia --key-file - foo.iso
+----
+
+== See Also
+
+*checkisomd5*(1), *gpg*(1), *implantisomd5*(1), *osc*(1), *tagmedia*(1).
+
+== Links
+
+- detailed doc: https://github.com/openSUSE/checkmedia/blob/master/README.adoc
+- libmediacheck doc: https://github.com/openSUSE/checkmedia/blob/master/mediacheck.md
+- checkmedia web site: https://github.com/openSUSE/checkmedia
+- Open Build Service: https://openbuildservice.org
+- openSUSE Build Service: https://build.opensuse.org
