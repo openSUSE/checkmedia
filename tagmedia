@@ -383,11 +383,14 @@ sub get_image_type
   my $iso_magic_ok = substr($image->{blob}, ISO9660_MAGIC_START, 8) eq "\x01CD001\x01\x00";
   my $little = 4 * unpack("V", substr($image->{blob}, ISO9660_VOLUME_SIZE, 4));
   my $big = 4 * unpack("N", substr($image->{blob}, ISO9660_VOLUME_SIZE + 4, 4));
+  my $stat_size = (-s $image->{name}) / 512;
+
   if(
     $iso_magic_ok &&
     $little &&
     $little == $big &&
-    $little <= (-s $image->{name}) / 512
+    # note: $stat_size will be 0 for block devices
+    ($stat_size == 0 || $little <= $stat_size)
   ) {
     $image->{iso_blocks} = $little;
   }
