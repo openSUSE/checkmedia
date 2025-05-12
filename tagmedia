@@ -128,6 +128,7 @@ my $opt_tags_export;
 my $opt_signature_export;
 my $opt_signature_import;
 my $opt_signature_create;
+my $opt_signature_tag;
 
 GetOptions(
   'show'               => \$opt_show,
@@ -145,6 +146,8 @@ GetOptions(
   'export-signature=s' => \$opt_signature_export,
   'import-signature=s' => \$opt_signature_import,
   'create-signature=s' => \$opt_signature_create,
+  'signature-tag'      => \$opt_signature_tag,
+  'no-signature-tag'   => sub { $opt_signature_tag = 0 },
   'clean'              => \$opt_clean,
   'verbose|v'          => sub { $opt_verbose++ },
   'version'            => sub { print "$VERSION\n"; exit 0 },
@@ -194,6 +197,12 @@ elsif($opt_digest =~ /^sha(1|224|256|384|512)(sum)?$/i && $opt_style eq 'suse') 
 elsif($opt_digest) {
   die "$opt_digest: unsupported digest\n";
 }
+
+if($opt_digest && ($opt_signature_create || $opt_signature_export || $opt_signature_import)) {
+  die "Sorry, no digest calculation and signature handling at the same time.\n";
+}
+
+$opt_signature_tag = ($opt_style eq 'suse' ? 1 : 0) if !defined $opt_signature_tag;
 
 get_fragments_value $current_tags;
 
@@ -325,6 +334,9 @@ sub usage
       --skip N                  Ignore N 2 kiB blocks at image end (rh style, default: 15).
       --check                   Tell installer to run media check at startup (suse style).
       --supported               Set supported flag (rh style).
+      --signature-tag           When adding a digest, check for signature block and add signature tag if
+                                one is found (default for style suse).
+      --no-signature-tag        When adding a digest, do not check for signature block (default for style rh).
 
     Signature related options:
 
@@ -866,7 +878,7 @@ sub calculate_digest
   #
   # This is just for auto-detecting the signature location; it has no effect
   # on the digest calculation.
-  if($opt_style ne 'suse' && $image->{skip_blocks} >= 4) {
+  if($opt_signature_tag && $opt_style ne 'suse' && $image->{skip_blocks} >= 4 && !$image->{signature_start}) {
     my $buf;
     my $read_len = sysread $image->{fh}, $buf, 4 << 9;
     if(SIGNATURE_MAGIC eq substr($buf, 0, length SIGNATURE_MAGIC)) {
@@ -1042,6 +1054,7 @@ sub create_signature
     close $p;
     import_signature $image, "$image->{name}.tmp_key";
     system "gpg --batch --yes --armor --export '$keyid' >$image->{name}.key";
+    print "public key for verifying $image->{name} written to $image->{name}.key\n";
   }
   unlink "$image->{name}.tmp_key";
 }
@@ -1066,7 +1079,7 @@ sub normalize_buffer
   my ($image, $pos, $buf_ref) = @_;
   my $blocks = length($$buf_ref) >> 9;
 
-  if($opt_style eq 'suse' && !$image->{signature_start}) {
+  if($opt_signature_tag && !$image->{signature_start}) {
     for (my $i = 0; $i < $blocks; $i++) {
       if(SIGNATURE_MAGIC eq substr($$buf_ref, $i << 9, length SIGNATURE_MAGIC)) {
         $image->{signature_start} = $pos + $i;
