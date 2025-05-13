@@ -83,6 +83,12 @@ Tell installer to run media check at startup (suse style).
 *--supported*::
 Set supported flag (rh style).
 
+*--signature-tag*::
+When adding a digest, check for a signature block and add a 'signature' tag if one is found (default for style suse).
+
+*--no-signature-tag*::
+When adding a digest, do not check for a signature block (default for style rh).
+
 === Signature related options
 
 *--create-signature* _KEYID_::
@@ -101,8 +107,8 @@ Equivalent to *--digest md5*.
 
 == Digest notes
 
-The digest is calculated over the entire image, leaving out the meta data block and, if one exists, the signature block. Padding blocks
-are also not taken into account.
+The digest is calculated over the entire image, leaving out the meta data block and, if one exists, the signature block (unless *--no-signature-tag* is used).
+Padding blocks are also not taken into account.
 
 For SUSE style media a separate digest over the last partition is also added, if a partition table exists.
 If this happens to be an EFI System Partition, the last but one partition is used.
@@ -124,6 +130,8 @@ Note that usually this block has to be included during image creation. It does n
 *tagmedia* scans the image for a block with this magic id when calculating a digest and stores a reference to it in the 'signature' tag if one is found.
 
 As an exception, if no such block had been identified, *tagmedia* will try to create one in the padding area, if a padding area exists.
+
+There are two options *--signature-tag* and *--no-signature-tag* that can be used to tell tagmedia explicitly whether to scan for a signature block or not.
 
 If you do not want *tagmedia* to run gpg directly, it is also possible to create the signature independently of *tagmedia* using *--export-tags* to store the raw meta data in a file, then sign it
 and import the signature using the *--import-signature* option.
