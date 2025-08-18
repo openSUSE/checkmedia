@@ -90,7 +90,7 @@ int main(int argc, char **argv)
     return 1;
   }
 
-  if(media->app_id) printf("        app: %s\n", media->app_id);
+  if(*media->app_id) printf("        app: %s\n", media->app_id);
   if(media->iso_blocks) {
     printf(
       "   iso size: %u%s kiB\n",
