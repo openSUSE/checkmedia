@@ -1022,7 +1022,7 @@ void verify_signature(mediacheck_t *media)
   free(buf);
 
   asprintf(&buf,
-    "/usr/bin/gpg --batch --homedir %s --no-default-keyring --ignore-time-conflict --ignore-valid-from "
+    "LC_MESSAGES=C.UTF-8 /usr/bin/gpg --batch --homedir %s --no-default-keyring --ignore-time-conflict --ignore-valid-from "
     "--keyring %s/sign.gpg --import %s >%s/gpg_keys.log 2>&1",
     tmp_dir,
     tmp_dir,
@@ -1048,7 +1048,7 @@ void verify_signature(mediacheck_t *media)
 
   if(!cmd_err) {
     asprintf(&buf,
-      "/usr/bin/gpg --batch --homedir %s --no-default-keyring --ignore-time-conflict --ignore-valid-from "
+      "LC_MESSAGES=C.UTF-8 /usr/bin/gpg --batch --homedir %s --no-default-keyring --ignore-time-conflict --ignore-valid-from "
       "--keyring %s/sign.gpg --verify %s/foo.asc %s/foo >%s/gpg_sign.log 2>&1",
       tmp_dir, tmp_dir, tmp_dir, tmp_dir, tmp_dir
     );
