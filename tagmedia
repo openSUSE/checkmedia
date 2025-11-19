@@ -46,7 +46,7 @@ use constant {
   ISO9660_APP_DATA_LENGTH => 0x200,
 };
 
-# Here are some MBR (partition table) related constants.
+# Here are some MBR and GPT (partition table) related constants.
 #
 # If in doubt about the MBR layout, check https://wiki.osdev.org/Partition_Table
 #
@@ -63,6 +63,24 @@ use constant {
 
   # MBR size (in bytes)
   MBR_LENGTH => 0x200,
+
+  # GPT header start (LBA 1)
+  GPT_OFFSET => 0x200,
+
+  # offset of signature in the GPT header
+  GPT_SIGNATURE_OFFSET => 0x0,
+
+  # offset of revision in the GPT header
+  GPT_REVISION_OFFSET => 0x8,
+
+  # offset of the pointer to the partition table
+  GPT_PARTITION_TABLE_PTR_OFFSET => 0x48,
+
+  # GUID of an unused partition entry
+  GPT_PART_GUID_UNUSED => "\x00" x 16,
+
+  # GUID of an ESP partition entry
+  GPT_PART_GUID_ESP => "\x28\x73\x2A\xC1\x1F\xF8\xD2\x11\xBA\x4B\x00\xA0\xC9\x3E\xC9\x3B",
 };
 
 # Some SUSE specific constants.
@@ -407,13 +425,42 @@ sub get_image_type
     $image->{iso_blocks} = $little;
   }
 
-  # Scan mbr for last primary partition.
+  # Scan GPT for last partition, skip ESP.
+  # Set $image->{part_start}, $image->{part_blocks} (in 0.5 kiB units).
+  if(substr($image->{blob}, GPT_OFFSET + GPT_SIGNATURE_OFFSET, 8) eq "EFI PART") {
+    die "Unsupported GPT revision" unless
+      unpack("l", substr($image->{blob}, GPT_OFFSET + GPT_REVISION_OFFSET, 4)) == 0x10000;
+
+    my ($pt_lba, $part_count, $partentry_size) = unpack(
+      "Qll",
+      substr($image->{blob}, GPT_OFFSET + GPT_PARTITION_TABLE_PTR_OFFSET, 8 + 4 + 4)
+    );
+    for (my $idx = 0; $idx < $part_count; $idx++) {
+      my ($type_guid, $uuid, $start, $end) = unpack(
+        "a16a16QQ",
+        substr($image->{blob}, $pt_lba * 512 + ($idx * $partentry_size), 16 + 16 + 8 + 8),
+      );
+
+      if(
+        $type_guid ne GPT_PART_GUID_UNUSED &&
+        $type_guid ne GPT_PART_GUID_ESP &&
+        $end > $start &&
+        $end > $image->{part_start} + $image->{part_blocks}
+      ) {
+        $image->{part_start} = $start;
+        $image->{part_blocks} = $end - $start + 1;
+      }
+    }
+  }
+
+  # If no GPT found, scan mbr for last primary partition.
   #
   # Ignore EFI system partition.
   #
   # Set $image->{part_start}, $image->{part_blocks} (in 0.5 kiB units).
   #
-  if(substr($image->{blob}, MBR_MAGIC_START, 2) eq "\x55\xaa") {
+  if(!$image->{part_blocks} &&
+       substr($image->{blob}, MBR_MAGIC_START, 2) eq "\x55\xaa") {
     for (my $idx = 0; $idx < 4; $idx++) {
       my ($boot, $type, $start, $size) = unpack(
         "Cx3Cx3VV",
