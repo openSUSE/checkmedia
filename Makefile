@@ -60,10 +60,14 @@ install: checkmedia
 	install -m 644 -D mediacheck.h $(DESTDIR)/usr/include/mediacheck.h
 
 %.1: %_man.adoc
-	asciidoctor -b manpage -a version=$(VERSION) -a soversion=${MAJOR_VERSION} $<
+	@if [ -x /usr/bin/asciidoctor ] ; then \
+	  asciidoctor -b manpage -a version=$(VERSION) -a soversion=${MAJOR_VERSION} $< ; \
+	fi
 
 README.html: README.adoc
-	asciidoctor -b html -a version=$(VERSION) -a soversion=${MAJOR_VERSION} $<
+	@if [ -x /usr/bin/asciidoctor ] ; then \
+	  asciidoctor -b html -a version=$(VERSION) -a soversion=${MAJOR_VERSION} $< ; \
+	fi
 
 doc: tagmedia.1 checkmedia.1 README.html
 
@@ -75,4 +79,4 @@ archive: changelog
 	xz -f package/$(PREFIX).tar
 
 clean:
-	rm -rf *.o *.so *.so.* *.1 *.html package checkmedia digestdemo *~ */*~ tests/*.{img,check,tag}
+	rm -rf *.o *.so *.so.* package checkmedia digestdemo *~ */*~ tests/*.{img,check,tag}

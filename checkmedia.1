@@ -1,0 +1,159 @@
+'\" t
+.\"     Title: checkmedia
+.\"    Author: [see the "AUTHOR(S)" section]
+.\" Generator: Asciidoctor 2.0.23
+.\"      Date: 2023-06-02
+.\"    Manual: User Commands
+.\"    Source: checkmedia 6.5
+.\"  Language: English
+.\"
+.TH "CHECKMEDIA" "1" "2023-06-02" "checkmedia 6.5" "User Commands"
+.ie \n(.g .ds Aq \(aq
+.el       .ds Aq '
+.ss \n[.ss] 0
+.nh
+.ad l
+.de URL
+\fI\\$2\fP <\\$1>\\$3
+..
+.als MTO URL
+.if \n[.g] \{\
+.  mso www.tmac
+.  am URL
+.    ad l
+.  .
+.  am MTO
+.    ad l
+.  .
+.  LINKSTYLE blue R < >
+.\}
+.SH "NAME"
+checkmedia \- check installation or Live media.
+.SH "SYNOPSIS"
+.sp
+\fBcheckmedia\fP [\fIOPTIONS\fP] \fIIMAGE\fP
+.SH "DESCRIPTION"
+.sp
+Installation/Live media carry some meta data stored in a reserved area in the ISO9660 file system.
+.sp
+\fBcheckmedia\fP can use these data to verify the media integrity.
+.sp
+\fIIMAGE\fP is an installation or Live medium; either ISO image or disk image.
+.sp
+Meta data come in two flavors: SUSE (SLE, openSUSE) style and Red Hat (RHEL, Fedora, CentOS, AlmaLinux, Rocky, ...) style.
+Both variants are supported.
+.sp
+For a detailed technical view, see \c
+.URL "file:///usr/share/doc/packages/libmediacheck6/README.html" "" ""
+.SS "Options"
+.sp
+\fB\-\-key\-file\fP \fIFILE\fP
+.RS 4
+Use public key in \fIFILE\fP for signature verification.
+.RE
+.sp
+\fB\-\-version\fP
+.RS 4
+Show \fBcheckmedia\fP version.
+.RE
+.sp
+\fB\-v\fP, \fB\-\-verbose\fP
+.RS 4
+Show more detailed info (repeat for more).
+.RE
+.sp
+\fB\-h\fP, \fB\-\-help\fP
+.RS 4
+Write this help text.
+.RE
+.SH "NOTES"
+.sp
+If the meta data block contains several digests \- for example, a digest over the entire ISO and, in case there is a partition table, also
+a digest over a partition \- all digests are checked.
+.sp
+If a signature block is present, the signature is verified.
+.sp
+The default setting is to use keys installed in \fB/usr/lib/rpm/gnupg/keys\fP. Pass an individual key file using the \fB\-\-key\-file\fP option
+if some other key was used to sign (for example, your own key).
+.sp
+To verify an image built in the Open Build Service, extract the public project key with \fBosc signkey\fP.
+.SH "EXAMPLES"
+.sp
+.if n .RS 4
+.nf
+.fam C
+# check foo.iso
+checkmedia foo.iso
+
+# check foo.iso, verify signature using your personal key ring
+checkmedia \-\-key\-file ~/.gnupg/pubring.gpg foo.iso
+
+# check foo.iso, built in the OBS in Foo:Bar:Project using the OBS project key
+osc signkey Foo:Bar:Project | sed \-e \*(Aqs/>\-/>\(rsn\-/\*(Aq | checkmedia \-\-key\-file \- foo.iso
+.fam
+.fi
+.if n .RE
+.SH "SEE ALSO"
+.sp
+\fBcheckisomd5\fP(1), \fBgpg\fP(1), \fBimplantisomd5\fP(1), \fBosc\fP(1), \fBtagmedia\fP(1).
+.SH "LINKS"
+.sp
+.RS 4
+.ie n \{\
+\h'-04'\(bu\h'+03'\c
+.\}
+.el \{\
+.  sp -1
+.  IP \(bu 2.3
+.\}
+detailed doc: \c
+.URL "https://github.com/openSUSE/checkmedia/blob/master/README.adoc" "" ""
+.RE
+.sp
+.RS 4
+.ie n \{\
+\h'-04'\(bu\h'+03'\c
+.\}
+.el \{\
+.  sp -1
+.  IP \(bu 2.3
+.\}
+libmediacheck doc: \c
+.URL "https://github.com/openSUSE/checkmedia/blob/master/mediacheck.md" "" ""
+.RE
+.sp
+.RS 4
+.ie n \{\
+\h'-04'\(bu\h'+03'\c
+.\}
+.el \{\
+.  sp -1
+.  IP \(bu 2.3
+.\}
+checkmedia web site: \c
+.URL "https://github.com/openSUSE/checkmedia" "" ""
+.RE
+.sp
+.RS 4
+.ie n \{\
+\h'-04'\(bu\h'+03'\c
+.\}
+.el \{\
+.  sp -1
+.  IP \(bu 2.3
+.\}
+Open Build Service: \c
+.URL "https://openbuildservice.org" "" ""
+.RE
+.sp
+.RS 4
+.ie n \{\
+\h'-04'\(bu\h'+03'\c
+.\}
+.el \{\
+.  sp -1
+.  IP \(bu 2.3
+.\}
+openSUSE Build Service: \c
+.URL "https://build.opensuse.org" "" ""
+.RE
