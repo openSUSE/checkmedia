@@ -1,0 +1,281 @@
+'\" t
+.\"     Title: tagmedia
+.\"    Author: [see the "AUTHOR(S)" section]
+.\" Generator: Asciidoctor 2.0.23
+.\"      Date: 2025-05-13
+.\"    Manual: User Commands
+.\"    Source: tagmedia 6.5
+.\"  Language: English
+.\"
+.TH "TAGMEDIA" "1" "2025-05-13" "tagmedia 6.5" "User Commands"
+.ie \n(.g .ds Aq \(aq
+.el       .ds Aq '
+.ss \n[.ss] 0
+.nh
+.ad l
+.de URL
+\fI\\$2\fP <\\$1>\\$3
+..
+.als MTO URL
+.if \n[.g] \{\
+.  mso www.tmac
+.  am URL
+.    ad l
+.  .
+.  am MTO
+.    ad l
+.  .
+.  LINKSTYLE blue R < >
+.\}
+.SH "NAME"
+tagmedia \- add/remove tags to installation or Live media.
+.SH "SYNOPSIS"
+.sp
+\fBtagmedia\fP [\fIOPTIONS\fP] \fIIMAGE\fP
+.SH "DESCRIPTION"
+.sp
+Installation/Live media carry some meta data stored in a reserved area in the ISO9660 file system.
+.sp
+\fBtagmedia\fP can display and modify these data.
+.sp
+The data are in text form, structured as key=value pairs. Most notably they include a digest (checksum) over the
+entire medium that can be used for verification with \fBcheckmedia\fP(1).
+.sp
+The meta data block can optionally be signed to verify its authenticity.
+.sp
+\fIIMAGE\fP is an installation or Live medium; either ISO image or disk image.
+.sp
+Meta data come in two flavors: SUSE (SLE, openSUSE) style and Red Hat (RHEL, Fedora, CentOS, AlmaLinux, Rocky, ...) style.
+Both variants are supported.
+.sp
+For a detailed technical view, see \c
+.URL "file:///usr/share/doc/packages/libmediacheck6/README.html" "" ""
+.sp
+If a digest was added, the media can be verified with \fBcheckmedia\fP(1) (both Red Hat and SUSE style) or \fBcheckisomd5\fP(1) (Red Hat style only).
+.SS "General options"
+.sp
+\fB\-\-style\fP \fISTYLE\fP
+.RS 4
+Data format. \fISTYLE\fP can be either \*(Aqrh\*(Aq or \*(Aqsuse\*(Aq (default: auto\-detected).
+.RE
+.sp
+\fB\-\-version\fP
+.RS 4
+Show \fBtagmedia\fP version.
+.RE
+.sp
+\fB\-v\fP, \fB\-\-verbose\fP
+.RS 4
+Show more detailed info (repeat for more).
+.RE
+.sp
+\fB\-\-help\fP
+.RS 4
+Write this help text.
+.RE
+.SS "Tag related options"
+.sp
+\fB\-\-show\fP
+.RS 4
+Show current tags (default if no option is given).
+.RE
+.sp
+\fB\-\-add\-tag\fP \fIFOO\fP=\fIBAR\fP
+.RS 4
+Add tag \fIFOO\fP with value \fIBAR\fP.
+.RE
+.sp
+\fB\-\-remove\-tag\fP \fIFOO\fP
+.RS 4
+Remove tag \fIFOO\fP.
+.RE
+.sp
+\fB\-\-clean\fP
+.RS 4
+Remove all tags.
+.RE
+.sp
+\fB\-\-export\-tags\fP \fIFILE\fP
+.RS 4
+Export raw tag data to \fIFILE\fP.
+.RE
+.SS "Digest related options"
+.sp
+\fB\-\-digest\fP \fIDIGEST\fP
+.RS 4
+Add digest \fIDIGEST\fP (suse style: md5, sha1, sha224, sha256, sha384, sha512, rh style: md5).
+.RE
+.sp
+\fB\-\-fragments\fP \fIN\fP
+.RS 4
+Split image into \fIN\fP fragments with individual digests (suse style default: 0, rh style default: 20)
+.RE
+.sp
+\fB\-\-pad\fP \fIN\fP
+.RS 4
+Ignore \fIN\fP 2 kiB blocks of padding at image end (suse style).
+.RE
+.sp
+\fB\-\-skip\fP \fIN\fP
+.RS 4
+Ignore \fIN\fP 2 kiB blocks at image end (rh style, default: 15).
+.RE
+.sp
+\fB\-\-check\fP
+.RS 4
+Tell installer to run media check at startup (suse style).
+.RE
+.sp
+\fB\-\-supported\fP
+.RS 4
+Set supported flag (rh style).
+.RE
+.sp
+\fB\-\-signature\-tag\fP
+.RS 4
+When adding a digest, check for a signature block and add a \*(Aqsignature\*(Aq tag if one is found (default for style suse).
+.RE
+.sp
+\fB\-\-no\-signature\-tag\fP
+.RS 4
+When adding a digest, do not check for a signature block (default for style rh).
+.RE
+.SS "Signature related options"
+.sp
+\fB\-\-create\-signature\fP \fIKEYID\fP
+.RS 4
+Sign meta data in \fIIMAGE\fP with gpg key \fIKEYID\fP. The public part of \fIKEYID\fP is exported to the file \fIIMAGE\fP.key.
+.RE
+.sp
+\fB\-\-import\-signature\fP \fIFILE\fP
+.RS 4
+Import signature from \fIFILE\fP.
+.RE
+.sp
+\fB\-\-export\-signature\fP \fIFILE\fP
+.RS 4
+Export signature to \fIFILE\fP.
+.RE
+.SS "Legacy options"
+.sp
+\fB\-\-md5\fP, \fB\-\-md5sum\fP
+.RS 4
+Equivalent to \fB\-\-digest md5\fP.
+.RE
+.SH "DIGEST NOTES"
+.sp
+The digest is calculated over the entire image, leaving out the meta data block and, if one exists, the signature block (unless \fB\-\-no\-signature\-tag\fP is used).
+Padding blocks are also not taken into account.
+.sp
+For SUSE style media a separate digest over the last partition is also added, if a partition table exists.
+If this happens to be an EFI System Partition, the last but one partition is used.
+.sp
+For Red Hat style media, the media is additionally split into parts (fragments) with separate checksums for each part to help localize
+where any mismatch occurs.
+.sp
+For a description of how exactly the digests are calculated, see the detailed doc link below.
+.SH "SIGNING NOTES"
+.sp
+You can add a signature of the meta data block. It can then be used to ensure the authenticity of the meta data, notably the stored digest.
+.sp
+The signature is stored in a special 2 kiB block. The block can be anywhere in the image, usually as part of the file system.
+The block is identified by a magic id (see detailed doc link below).
+.sp
+Note that usually this block has to be included during image creation. It does not have to be visible in the file system.
+.sp
+\fBtagmedia\fP scans the image for a block with this magic id when calculating a digest and stores a reference to it in the \*(Aqsignature\*(Aq tag if one is found.
+.sp
+As an exception, if no such block had been identified, \fBtagmedia\fP will try to create one in the padding area, if a padding area exists.
+.sp
+There are two options \fB\-\-signature\-tag\fP and \fB\-\-no\-signature\-tag\fP that can be used to tell tagmedia explicitly whether to scan for a signature block or not.
+.sp
+If you do not want \fBtagmedia\fP to run gpg directly, it is also possible to create the signature independently of \fBtagmedia\fP using \fB\-\-export\-tags\fP to store the raw meta data in a file, then sign it
+and import the signature using the \fB\-\-import\-signature\fP option.
+.SH "OPEN BUILD SERVICE"
+.sp
+If a signature block is present the OBS will automatically sign images with the project key.
+.sp
+You can get the public part of the project key needed for verification with \fBosc signkey\fP.
+.SH "EXAMPLES"
+.sp
+.if n .RS 4
+.nf
+.fam C
+# display current meta data
+tagmedia foo.iso
+
+# create digest
+tagmedia \-\-digest sha256 foo.iso
+
+# create digest, adding a rh\-style fragment digest for early error detection
+tagmedia \-\-digest sha256 \-\-fragments 20 foo.iso
+
+# create signature, using gpg key id foo\-key
+tagmedia \-\-create\-signature foo\-key foo.iso
+.fam
+.fi
+.if n .RE
+.SH "SEE ALSO"
+.sp
+\fBcheckisomd5\fP(1), \fBcheckmedia\fP(1), \fBgpg\fP(1), \fBimplantisomd5\fP(1), \fBosc\fP(1).
+.SH "LINKS"
+.sp
+.RS 4
+.ie n \{\
+\h'-04'\(bu\h'+03'\c
+.\}
+.el \{\
+.  sp -1
+.  IP \(bu 2.3
+.\}
+detailed doc: \c
+.URL "https://github.com/openSUSE/checkmedia/blob/master/README.adoc" "" ""
+.RE
+.sp
+.RS 4
+.ie n \{\
+\h'-04'\(bu\h'+03'\c
+.\}
+.el \{\
+.  sp -1
+.  IP \(bu 2.3
+.\}
+libmediacheck doc: \c
+.URL "https://github.com/openSUSE/checkmedia/blob/master/mediacheck.md" "" ""
+.RE
+.sp
+.RS 4
+.ie n \{\
+\h'-04'\(bu\h'+03'\c
+.\}
+.el \{\
+.  sp -1
+.  IP \(bu 2.3
+.\}
+checkmedia web site: \c
+.URL "https://github.com/openSUSE/checkmedia" "" ""
+.RE
+.sp
+.RS 4
+.ie n \{\
+\h'-04'\(bu\h'+03'\c
+.\}
+.el \{\
+.  sp -1
+.  IP \(bu 2.3
+.\}
+Open Build Service: \c
+.URL "https://openbuildservice.org" "" ""
+.RE
+.sp
+.RS 4
+.ie n \{\
+\h'-04'\(bu\h'+03'\c
+.\}
+.el \{\
+.  sp -1
+.  IP \(bu 2.3
+.\}
+openSUSE Build Service: \c
+.URL "https://build.opensuse.org" "" ""
+.RE

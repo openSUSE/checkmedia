@@ -24,9 +24,8 @@ Version:        0.0
 Release:        0
 URL:            https://github.com/openSUSE/checkmedia
 Source:         %{name}-%{version}.tar.xz
-BuildRequires:  gpg
+BuildRequires:  (gpg2 or gnupg2)
 BuildRequires:  xz
-BuildRequires:  rubygem(asciidoctor)
 BuildRoot:      %{_tmppath}/%{name}-%{version}-build
 
 %description
@@ -37,7 +36,7 @@ The program checks installation or Live media for errors.
 %package -n     libmediacheck%{libversion}
 Summary:        Library for checking installation or Live media
 Group:          System/Libraries
-Requires:       gpg
+Requires:       (gpg2 or gnupg2)
 
 %description -n libmediacheck%{libversion}
 Library for checking installation or Live media. Used by checkmedia and linuxrc.
@@ -82,7 +81,7 @@ install -D -m 644 tagmedia.1 %{buildroot}%{_mandir}/man1/tagmedia.1
 %{_libdir}/*.so.*
 %doc README.*
 %doc mediacheck.md
-%if 0%{?suse_version} >= 1500
+%if 0%{?suse_version} >= 1500 || 0%{?suse_version} == 0
 %license COPYING
 %else
 %doc COPYING
