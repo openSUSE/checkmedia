@@ -12,10 +12,7 @@
 #include <sys/types.h>
 #include <sys/stat.h>
 
-#include "md5.h"
-#include "sha1.h"
-#include "sha256.h"
-#include "sha512.h"
+#include <openssl/evp.h>
 
 // exported symbol - all others are not exported by the library
 #define API_SYM __attribute__((visibility("default")))
@@ -54,20 +51,11 @@
 // signature block starts with this string
 #define SIGNATURE_MAGIC "7984fc91-a43f-4e45-bf27-6d3aa08b24cf"
 
-#define MAX_DIGEST_SIZE SHA512_DIGEST_SIZE
+#define MAX_DIGEST_SIZE EVP_MAX_MD_SIZE
 
 typedef enum {
   digest_none, digest_md5, digest_sha1, digest_sha224, digest_sha256, digest_sha384, digest_sha512
 } digest_type_t;
-
-typedef union {
-  struct md5_ctx md5;
-  struct sha1_ctx sha1;
-  struct sha256_ctx sha224;
-  struct sha256_ctx sha256;
-  struct sha512_ctx sha384;
-  struct sha512_ctx sha512;
-} digest_ctx_t;
 
 struct mediacheck_digest_s {
   digest_type_t type;				/* digest type */
@@ -76,8 +64,9 @@ struct mediacheck_digest_s {
   unsigned valid:1;				/* struct holds valid digest data */
   unsigned ok:1;				/* data[] and ref[] match */
   unsigned ctx_init:1;				/* ctx has been initialized */
+  unsigned ctx_init_fail:1;			/* ctx failed to initialize */
   unsigned finished:1;				/* digest_finish() has been callled */
-  digest_ctx_t ctx;				/* digest context */
+  EVP_MD_CTX *md_ctx;				/* libcrypto's digest structure */
   unsigned char data[MAX_DIGEST_SIZE];		/* binary digest */
   char hex[MAX_DIGEST_SIZE*2 + 1];		/* hex digest */
   unsigned char ref[MAX_DIGEST_SIZE];		/* expected binary digest */
@@ -95,6 +84,7 @@ static char *sign_states[] = {
   "not signed", "not checked", "ok", "bad", "bad (no matching key)"
 };
 
+static void digest_clone(mediacheck_digest_t *dst, mediacheck_digest_t *src);
 static void digest_ctx_init(mediacheck_digest_t *digest);
 static void digest_finish(mediacheck_digest_t *digest);
 static void digest_data_to_hex(mediacheck_digest_t *digest);
@@ -225,7 +215,7 @@ API_SYM void mediacheck_calculate_digest(mediacheck_t *media)
   );
 
   unsigned last_fragment = 0;
-  *media->fragment.sums = 0;;
+  *media->fragment.sums = 0;
 
   for(chunk = 0; !media->abort && chunk <= last_chunk; chunk++) {
     unsigned u, size = chunk_size;
@@ -259,14 +249,16 @@ API_SYM void mediacheck_calculate_digest(mediacheck_t *media)
         if(!media->digest.frag) {
           media->digest.frag = calloc(1, sizeof *media->digest.frag);
         }
-        *media->digest.frag = *media->digest.iso;
+        digest_clone(media->digest.frag, media->digest.iso);
         digest_finish(media->digest.frag);
 
+        unsigned len = strlen(media->fragment.sums);
         for(unsigned u = 0; u < fragment_size && u < media->digest.frag->size; u++) {
           char buf[4];
           sprintf(buf, "%x", media->digest.frag->data[u]);
-          strncat(media->fragment.sums, buf, 1);
+          media->fragment.sums[len++] = buf[0];
         }
+        media->fragment.sums[len] = 0;
         if(memcmp(media->fragment.sums_ref, media->fragment.sums, strlen(media->fragment.sums))) {
           media->digest.frag->ok = 0;
 
@@ -333,13 +325,13 @@ API_SYM mediacheck_digest_t *mediacheck_digest_init(char *digest_name, char *dig
     char *name;
     int size;
   } digests[] = {
-    { digest_none, "", 0 },
-    { digest_md5, "md5", MD5_DIGEST_SIZE },
-    { digest_sha1, "sha1", SHA1_DIGEST_SIZE },
-    { digest_sha224, "sha224", SHA224_DIGEST_SIZE },
-    { digest_sha256, "sha256", SHA256_DIGEST_SIZE },
-    { digest_sha384, "sha384", SHA384_DIGEST_SIZE },
-    { digest_sha512, "sha512", SHA512_DIGEST_SIZE },
+    { digest_none,   "",       0       },
+    { digest_md5,    "md5",    128 / 8 },
+    { digest_sha1,   "sha1",   160 / 8 },
+    { digest_sha224, "sha224", 224 / 8 },
+    { digest_sha256, "sha256", 256 / 8 },
+    { digest_sha384, "sha384", 384 / 8 },
+    { digest_sha512, "sha512", 512 / 8 },
   };
 
   digest = calloc(1, sizeof *digest);
@@ -410,27 +402,10 @@ API_SYM void mediacheck_digest_process(mediacheck_digest_t *digest, unsigned cha
 
   if(!digest->ctx_init) digest_ctx_init(digest);
 
-  switch(digest->type) {
-    case digest_md5:
-      md5_process_bytes(buffer, len, &digest->ctx.md5);
-      break;
-    case digest_sha1:
-      sha1_process_bytes(buffer, len, &digest->ctx.sha1);
-      break;
-    case digest_sha224:
-      sha256_process_bytes(buffer, len, &digest->ctx.sha224);
-      break;
-    case digest_sha256:
-      sha256_process_bytes(buffer, len, &digest->ctx.sha256);
-      break;
-    case digest_sha384:
-      sha512_process_bytes(buffer, len, &digest->ctx.sha384);
-      break;
-    case digest_sha512:
-      sha512_process_bytes(buffer, len, &digest->ctx.sha512);
-      break;
-    default:
-      break;
+  if(!digest->ctx_init) return;
+
+  if(digest->type != digest_none) {
+    EVP_DigestUpdate(digest->md_ctx, buffer, len);
   }
 }
 
@@ -495,9 +470,32 @@ API_SYM void mediacheck_digest_done(mediacheck_digest_t *digest)
 {
   if(!digest) return;
 
+  if(digest->md_ctx) EVP_MD_CTX_free(digest->md_ctx);
+
   free(digest);
 
   return;
+}
+
+
+/*
+ * Create a clone (deep copy) of src and copy to dst.
+ *
+ * The point is to handle md_ctx, which is managed by libcrypt.
+ */
+void digest_clone(mediacheck_digest_t *dst, mediacheck_digest_t *src)
+{
+  if(dst->md_ctx) EVP_MD_CTX_free(dst->md_ctx);
+
+  *dst = *src;
+
+  if(dst->md_ctx) {
+    dst->md_ctx = EVP_MD_CTX_dup(dst->md_ctx);
+    if(!dst->md_ctx) {
+      dst->ctx_init = 0;
+      dst->ctx_init_fail = 1;
+    }
+  }
 }
 
 
@@ -508,30 +506,22 @@ API_SYM void mediacheck_digest_done(mediacheck_digest_t *digest)
  */
 void digest_ctx_init(mediacheck_digest_t *digest)
 {
-  switch(digest->type) {
-    case digest_md5:
-      md5_init_ctx(&digest->ctx.md5);
-      break;
-    case digest_sha1:
-      sha1_init_ctx(&digest->ctx.sha1);
-      break;
-    case digest_sha224:
-      sha224_init_ctx(&digest->ctx.sha224);
-      break;
-    case digest_sha256:
-      sha256_init_ctx(&digest->ctx.sha256);
-      break;
-    case digest_sha384:
-      sha384_init_ctx(&digest->ctx.sha384);
-      break;
-    case digest_sha512:
-      sha512_init_ctx(&digest->ctx.sha512);
-      break;
-    default:
-      break;
+  if(digest->ctx_init_fail) return;
+
+  if(digest->type != digest_none) {
+    digest->md_ctx = EVP_MD_CTX_new();
+    if(digest->md_ctx) {
+      EVP_MD *md_digest = EVP_MD_fetch(NULL, digest->name, NULL);
+      if(md_digest) {
+        if(EVP_DigestInit_ex(digest->md_ctx, md_digest, NULL)) {
+          digest->ctx_init = 1;
+        }
+        EVP_MD_free(md_digest);
+      }
+    }
   }
 
-  digest->ctx_init = 1;
+  if(!digest->ctx_init) digest->ctx_init_fail = 1;
 }
 
 
@@ -546,36 +536,16 @@ void digest_finish(mediacheck_digest_t *digest)
 {
   if(!digest->ctx_init) digest_ctx_init(digest);
 
-  switch(digest->type) {
-    case digest_md5:
-      md5_finish_ctx(&digest->ctx.md5, digest->data);
-      break;
-    case digest_sha1:
-      sha1_finish_ctx(&digest->ctx.sha1, digest->data);
-      break;
-    case digest_sha224:
-      sha224_finish_ctx(&digest->ctx.sha224, digest->data);
-      break;
-    case digest_sha256:
-      sha256_finish_ctx(&digest->ctx.sha256, digest->data);
-      break;
-    case digest_sha384:
-      sha384_finish_ctx(&digest->ctx.sha384, digest->data);
-      break;
-    case digest_sha512:
-      sha512_finish_ctx(&digest->ctx.sha512, digest->data);
-      break;
-    default:
-      break;
-  }
-
-  digest->ctx_init = 0;
-
-  if(digest->type != digest_none) {
+  if(digest->ctx_init && digest->type != digest_none) {
+    if(!EVP_DigestFinal_ex(digest->md_ctx, digest->data, NULL)) {
+      memset(digest->data, 0, sizeof digest->data);
+    }
     digest->ok = memcmp(digest->data, digest->ref, digest->size) ? 0 : 1;
   }
 
   digest_data_to_hex(digest);
+
+  digest->ctx_init = 0;
 
   digest->finished = 1;
 }

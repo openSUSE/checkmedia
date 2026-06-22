@@ -24,8 +24,10 @@ Version:        0.0
 Release:        0
 URL:            https://github.com/openSUSE/checkmedia
 Source:         %{name}-%{version}.tar.xz
-BuildRequires:  (gpg2 or gnupg2)
 BuildRequires:  xz
+BuildRequires:  (gpg2 or gnupg2)
+# the next line is for Fedora Rawhide; we want at least ssl 3 but resolve the ambiguity to ssl 4
+BuildRequires:  (pkgconfig(libcrypto) >= 3 without openssl3-devel)
 BuildRoot:      %{_tmppath}/%{name}-%{version}-build
 
 %description

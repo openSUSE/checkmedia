@@ -16,9 +16,6 @@ LIB_NAME     = libmediacheck
 LIB_FILENAME = $(LIB_NAME).so.$(VERSION)
 LIB_SONAME   = $(LIB_NAME).so.$(MAJOR_VERSION)
 
-DIGEST_SRC  = $(wildcard md5.c sha*.c)
-DIGEST_OBJ  = $(DIGEST_SRC:.c=.o)
-
 LIBDIR = /usr/lib$(shell ldd /bin/sh | grep -q /lib64/ && echo 64)
 
 .PHONY: all doc clean install test archive
@@ -34,11 +31,8 @@ digestdemo: digestdemo.c $(LIB_FILENAME)
 mediacheck.o: mediacheck.c mediacheck.h
 	$(CC) -c $(CFLAGS) $(SHARED_FLAGS) -o $@ $<
 
-$(DIGEST_OBJ): %.o: %.c %.h
-	$(CC) -c $(CFLAGS) $(SHARED_FLAGS) -o $@ $<
-
-$(LIB_FILENAME): $(DIGEST_OBJ) mediacheck.o
-	$(CC) -shared -Wl,-soname,$(LIB_SONAME) mediacheck.o $(DIGEST_OBJ) -o $(LIB_FILENAME)
+$(LIB_FILENAME): mediacheck.o
+	$(CC) -shared -Wl,-soname,$(LIB_SONAME) mediacheck.o -o $(LIB_FILENAME) -lcrypto
 	@ln -snf $(LIB_FILENAME) $(LIB_SONAME)
 	@ln -snf $(LIB_SONAME) $(LIB_NAME).so
 
