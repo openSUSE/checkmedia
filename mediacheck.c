@@ -225,7 +225,7 @@ API_SYM void mediacheck_calculate_digest(mediacheck_t *media)
   );
 
   unsigned last_fragment = 0;
-  *media->fragment.sums = 0;;
+  *media->fragment.sums = 0;
 
   for(chunk = 0; !media->abort && chunk <= last_chunk; chunk++) {
     unsigned u, size = chunk_size;
@@ -262,11 +262,13 @@ API_SYM void mediacheck_calculate_digest(mediacheck_t *media)
         *media->digest.frag = *media->digest.iso;
         digest_finish(media->digest.frag);
 
+        unsigned len = strlen(media->fragment.sums);
         for(unsigned u = 0; u < fragment_size && u < media->digest.frag->size; u++) {
           char buf[4];
           sprintf(buf, "%x", media->digest.frag->data[u]);
-          strncat(media->fragment.sums, buf, 1);
+          media->fragment.sums[len++] = buf[0];
         }
+        media->fragment.sums[len] = 0;
         if(memcmp(media->fragment.sums_ref, media->fragment.sums, strlen(media->fragment.sums))) {
           media->digest.frag->ok = 0;
 
